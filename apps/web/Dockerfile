@@ -30,7 +30,10 @@ COPY --from=builder /app/apps/web/.env.schema ./apps/web/.env.schema
 ENV HOSTNAME=0.0.0.0
 ENV UPLOAD_DIR=/data/uploads
 # O build grava o standalone como root. O processo sobe como node e precisa ler esses arquivos.
-RUN chmod -R a+rX /app && mkdir -p /data/uploads && chown node:node /data/uploads
+# Só a pasta do app: node_modules já é legível e um chmod nela deixa o build minutos parado.
+RUN chmod -R a+rX /app/apps \
+	&& if [ -e /app/package.json ]; then chmod a+rX /app/package.json; fi \
+	&& mkdir -p /data/uploads && chown node:node /data/uploads
 ENV PORT=3001
 EXPOSE 3001
 
