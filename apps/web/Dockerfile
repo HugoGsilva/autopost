@@ -29,7 +29,8 @@ COPY --from=builder /app/apps/web/.env.schema ./apps/web/.env.schema
 
 ENV HOSTNAME=0.0.0.0
 ENV UPLOAD_DIR=/data/uploads
-RUN mkdir -p /data/uploads && chown node:node /data/uploads
+# O build grava o standalone como root. O processo sobe como node e precisa ler esses arquivos.
+RUN chmod -R a+rX /app && mkdir -p /data/uploads && chown node:node /data/uploads
 ENV PORT=3001
 EXPOSE 3001
 

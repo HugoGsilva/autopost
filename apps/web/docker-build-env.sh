@@ -12,6 +12,7 @@ else
 	printf 'BETTER_AUTH_SECRET=%s\nBETTER_AUTH_URL=%s\nDATABASE_URL=%s\nAPP_URL=%s\nCORS_ORIGIN=%s\nNODE_ENV=production\n' \
 		"$BETTER_AUTH_SECRET" "$BETTER_AUTH_URL" "$DATABASE_URL" "$app_url" "$app_url" \
 		> /app/apps/web/.env.local
+	umask 022
 fi
 cd /app/apps/web
 bun run build
