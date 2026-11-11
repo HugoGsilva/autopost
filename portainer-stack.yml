@@ -1,0 +1,126 @@
+# Stack do Cast no Portainer (Swarm + Traefik).
+# As imagens vêm do Docker Hub. Publicar uma nova é manual (workflow "Publicar imagens").
+#
+# Antes de subir:
+# 1. No Postgres que já existe (hostname `postgres`), crie o banco `autopost`.
+# 2. No Portainer, em Environment variables desta stack, defina:
+#    DATABASE_URL=postgresql://postgres:SENHA@postgres:5432/autopost
+#    BETTER_AUTH_SECRET=  (openssl rand -base64 32, no mínimo 32 caracteres)
+#    SETUP_ADMIN_EMAIL=   (só este e-mail cria o administrador no primeiro acesso)
+#    ENCRYPTION_KEY=      (opcional; se vazio, os tokens das redes usam o BETTER_AUTH_SECRET)
+#    TRUSTED_PROXIES=     (opcional; CIDR do Traefik, senão o limite de login vê só o IP do proxy)
+#
+# Domínio: cast.ia2s.com.br. O Traefik desta VPS já emite o certificado.
+
+version: "3.8"
+
+services:
+  web:
+    image: hugogsilva/cast-web:latest
+    hostname: "{{.Service.Name}}.{{.Task.Slot}}"
+    networks:
+      - ia2s
+    volumes:
+      - cast_uploads:/data/uploads
+    environment:
+      - TZ=America/Sao_Paulo
+      - NODE_ENV=production
+      - HOSTNAME=0.0.0.0
+      - PORT=3001
+      - UPLOAD_DIR=/data/uploads
+      - DATABASE_URL=${DATABASE_URL:?defina DATABASE_URL}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:?defina BETTER_AUTH_SECRET}
+      - BETTER_AUTH_URL=https://cast.ia2s.com.br
+      - APP_URL=https://cast.ia2s.com.br
+      - CORS_ORIGIN=https://cast.ia2s.com.br
+      - DEMO_ENABLED=false
+      - SETUP_ADMIN_EMAIL=${SETUP_ADMIN_EMAIL:?defina SETUP_ADMIN_EMAIL}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-}
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        order: stop-first
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.cast.rule=Host(`cast.ia2s.com.br`)
+        - traefik.http.routers.cast.entrypoints=websecure
+        - traefik.http.routers.cast.tls.certresolver=letsencryptresolver
+        - traefik.http.routers.cast.service=cast
+        - traefik.http.services.cast.loadbalancer.server.port=3001
+        - traefik.http.services.cast.loadbalancer.passHostHeader=true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  worker:
+    image: hugogsilva/cast-worker:latest
+    hostname: "{{.Service.Name}}.{{.Task.Slot}}"
+    networks:
+      - ia2s
+    volumes:
+      - cast_uploads:/data/uploads
+    environment:
+      - TZ=America/Sao_Paulo
+      - NODE_ENV=production
+      - UPLOAD_DIR=/data/uploads
+      - DATABASE_URL=${DATABASE_URL:?defina DATABASE_URL}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:?defina BETTER_AUTH_SECRET}
+      - APP_URL=https://cast.ia2s.com.br
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      - MIGRATE_ON_START=true
+      - WORKER_POLL_MS=5000
+      - WORKER_CONCURRENCY=4
+      - MEDIA_RETENTION_DAYS=30
+      - DEMO_ENABLED=false
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        order: stop-first
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  ia2s:
+    external: true
+    name: ia2s
+
+volumes:
+  cast_uploads:

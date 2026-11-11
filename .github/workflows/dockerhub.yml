@@ -1,0 +1,52 @@
+name: Publicar imagens
+
+# Só roda quando alguém dispara na mão. Push na master não publica imagem nova.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: dockerhub
+  cancel-in-progress: false
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          target: runner
+          push: true
+          tags: |
+            hugogsilva/cast-web:latest
+            hugogsilva/cast-web:${{ github.sha }}
+          build-args: |
+            BETTER_AUTH_SECRET=build-only-placeholder-not-the-runtime-secret
+            BETTER_AUTH_URL=https://cast.ia2s.com.br
+            APP_URL=https://cast.ia2s.com.br
+            DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build
+
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/worker/Dockerfile
+          push: true
+          tags: |
+            hugogsilva/cast-worker:latest
+            hugogsilva/cast-worker:${{ github.sha }}
