@@ -26,14 +26,12 @@ COPY --from=builder /app/apps/web/public ./apps/web/public
 # auto-load needs the Varlock CLI and its installed dependencies.
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/web/.env.schema ./apps/web/.env.schema
+# O Varlock regrava este arquivo ao subir. Sem ele, e sem permissão de escrita, o processo cai.
+COPY --from=builder /app/apps/web/src/env.ts ./apps/web/src/env.ts
 
 ENV HOSTNAME=0.0.0.0
 ENV UPLOAD_DIR=/data/uploads
-# O build grava o standalone como root. O processo sobe como node e precisa ler esses arquivos.
-# Só a pasta do app: node_modules já é legível e um chmod nela deixa o build minutos parado.
-RUN chmod -R a+rX /app/apps \
-	&& if [ -e /app/package.json ]; then chmod a+rX /app/package.json; fi \
-	&& mkdir -p /data/uploads && chown node:node /data/uploads
+RUN chown -R node:node /app/apps/web && mkdir -p /data/uploads && chown node:node /data/uploads
 ENV PORT=3001
 EXPOSE 3001
 
