@@ -9,7 +9,8 @@
 	},
 	"dependencies": {
 		"@autopost/db": "workspace:*",
-		"@autopost/social": "workspace:*"
+		"@autopost/social": "workspace:*",
+		"drizzle-orm": "catalog:"
 	},
 	"devDependencies": {
 		"@autopost/config": "workspace:*",
