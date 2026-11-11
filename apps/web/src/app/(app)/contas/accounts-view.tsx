@@ -137,6 +137,24 @@ export function AccountsView({
 	const mine = accounts.data.filter((a) => platformOf(a.platform));
 	const ready = list.filter((p) => p.configured);
 	const pending = list.filter((p) => !p.configured);
+	// As mais usadas primeiro. O resto (Bluesky, Discord, Demo…) fica depois.
+	const popularFirst = [
+		"instagram",
+		"telegram",
+		"facebook",
+		"youtube",
+		"tiktok",
+		"linkedin",
+		"x",
+	];
+	const byUse = (a: PlatformItem, b: PlatformItem) => {
+		const rank = (id: string) => {
+			const i = popularFirst.indexOf(id);
+			return i === -1 ? popularFirst.length : i;
+		};
+		return rank(a.id) - rank(b.id);
+	};
+	const connectable = (isAdmin ? list : ready).slice().sort(byUse);
 
 	return (
 		<div className="space-y-10">
@@ -176,8 +194,21 @@ export function AccountsView({
 						Você entra na rede, autoriza, e volta para cá já conectado.
 					</p>
 				</div>
+				{isAdmin &&
+					!platforms.data.appUrlIsPublic &&
+					pending.some((p) => p.auth !== "manual") && (
+						<Alert>
+							<Globe />
+							<AlertTitle>Sistema em endereço local</AlertTitle>
+							<AlertDescription>
+								As redes só aceitam o login quando o Cast está publicado no
+								domínio da empresa (https). Peça ao responsável técnico para
+								publicar e definir a variável APP_URL.
+							</AlertDescription>
+						</Alert>
+					)}
 				<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-					{ready.map((p) => (
+					{connectable.map((p) => (
 						<Card
 							key={p.id}
 							className="gap-3 p-4"
@@ -198,63 +229,33 @@ export function AccountsView({
 									{p.requirements}
 								</p>
 							)}
-							<ConnectButton
-								platform={p}
-								hasAccounts={mine.some((a) => a.platform === p.id)}
-								onManual={() => setManual(p)}
-							/>
+							{p.configured ? (
+								<ConnectButton
+									platform={p}
+									hasAccounts={mine.some((a) => a.platform === p.id)}
+									onManual={() => setManual(p)}
+								/>
+							) : (
+								<Button
+									variant="outline"
+									className="h-11 w-full"
+									render={<Link href={`/configuracoes#${p.id}`} />}
+									nativeButton={false}
+								>
+									<Settings2 /> Configurar
+								</Button>
+							)}
 						</Card>
 					))}
 				</div>
 			</section>
 
-			{pending.length > 0 &&
-				(isAdmin ? (
-					<section className="space-y-3">
-						<div>
-							<h2 className="font-display text-2xl">Ainda não liberadas</h2>
-							<p className="text-muted-foreground text-sm">
-								Estas redes precisam ser configuradas uma vez por você
-								(administrador) antes de a equipe conectar.
-							</p>
-						</div>
-						{!platforms.data.appUrlIsPublic && (
-							<Alert>
-								<Globe />
-								<AlertTitle>Sistema em endereço local</AlertTitle>
-								<AlertDescription>
-									As redes só aceitam o login quando o Cast está publicado no
-									domínio da empresa (https). Peça ao responsável técnico para
-									publicar e definir a variável APP_URL.
-								</AlertDescription>
-							</Alert>
-						)}
-						<div className="flex flex-wrap gap-2">
-							{pending.map((p) => (
-								<Button
-									key={p.id}
-									variant="outline"
-									className="h-11"
-									render={<Link href={`/configuracoes#${p.id}`} />}
-									nativeButton={false}
-								>
-									<PlatformBadge
-										platform={p.id}
-										color={p.brandColor}
-										size="sm"
-									/>
-									Configurar {p.name}
-									<Settings2 className="text-muted-foreground" />
-								</Button>
-							))}
-						</div>
-					</section>
-				) : (
-					<p className="text-muted-foreground text-sm">
-						Outras redes ({pending.map((p) => p.name).join(", ")}) podem ser
-						liberadas pelo administrador.
-					</p>
-				))}
+			{!isAdmin && pending.length > 0 && (
+				<p className="text-muted-foreground text-sm">
+					Outras redes ({pending.map((p) => p.name).join(", ")}) podem ser
+					liberadas pelo administrador.
+				</p>
+			)}
 
 			<ManualConnectDialog platform={manual} onClose={() => setManual(null)} />
 
