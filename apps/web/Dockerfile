@@ -3,10 +3,16 @@ COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /app
 
 COPY . .
-RUN --mount=type=secret,id=web_env,target=/app/apps/web/.env.local --mount=type=secret,id=server_env,target=/app/apps/server/.env.local --mount=type=cache,target=/root/.bun/install/cache bun install
+RUN --mount=type=cache,target=/root/.bun/install/cache bun install
 
+# Compose monta o .env como secret. Sem esse secret (Dokploy), o build usa os ARGs.
+ARG BETTER_AUTH_SECRET
+ARG BETTER_AUTH_URL
+ARG DATABASE_URL
+ARG APP_URL
 ENV NODE_ENV=production
-RUN --mount=type=secret,id=web_env,target=/app/apps/web/.env.local --mount=type=secret,id=server_env,target=/app/apps/server/.env.local cd apps/web && bun run build && rm -f .next/standalone/.env* .next/standalone/apps/web/.env*
+RUN --mount=type=secret,id=web_env,target=/run/secrets/web_env,required=false \
+	sh apps/web/docker-build-env.sh
 # standalone output excludes public/; ensure it exists so the runner copy never fails
 RUN mkdir -p apps/web/public
 
@@ -22,8 +28,12 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/web/.env.schema ./apps/web/.env.schema
 
 ENV HOSTNAME=0.0.0.0
+ENV UPLOAD_DIR=/data/uploads
+RUN mkdir -p /data/uploads && chown node:node /data/uploads
 ENV PORT=3001
 EXPOSE 3001
 
 WORKDIR /app/apps/web
+# Sem root em produção (uid 1000, o mesmo do worker, para compartilhar o volume de vídeos)
+USER node
 CMD ["node", "--import", "varlock/auto-load", "server.js"]

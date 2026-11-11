@@ -1,25 +1,28 @@
 {
-  "name": "@autopost/api",
-  "type": "module",
-  "exports": {
-    ".": "./src/index.ts",
-    "./*": "./src/*.ts"
-  },
-  "scripts": {
-    "build": "tsc -b",
-    "check-types": "tsc -b"
-  },
-  "dependencies": {
-    "@autopost/auth": "workspace:*",
-    "@autopost/db": "workspace:*",
-    "@orpc/client": "catalog:",
-    "@orpc/openapi": "catalog:",
-    "@orpc/server": "catalog:",
-    "@orpc/zod": "catalog:",
-    "zod": "catalog:"
-  },
-  "devDependencies": {
-    "@autopost/config": "workspace:*",
-    "typescript": "catalog:"
-  }
+	"name": "@autopost/api",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./*": "./src/*.ts"
+	},
+	"scripts": {
+		"build": "tsc -b",
+		"check-types": "tsc -b"
+	},
+	"dependencies": {
+		"@autopost/auth": "workspace:*",
+		"@autopost/db": "workspace:*",
+		"@autopost/social": "workspace:*",
+		"better-auth": "catalog:",
+		"drizzle-orm": "catalog:",
+		"@orpc/client": "catalog:",
+		"@orpc/openapi": "catalog:",
+		"@orpc/server": "catalog:",
+		"@orpc/zod": "catalog:",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@autopost/config": "workspace:*",
+		"typescript": "catalog:"
+	}
 }

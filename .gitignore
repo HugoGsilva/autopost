@@ -56,3 +56,12 @@ coverage
 .cache
 tmp
 temp
+
+# Dados locais (postgres embutido, uploads)
+.data
+test-results
+playwright-report
+
+# Build de testes E2E
+.next-e2e
+e2e/.fixtures

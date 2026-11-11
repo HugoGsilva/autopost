@@ -1,0 +1,20 @@
+{
+	"name": "worker",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "varlock run --path ../web/ -- bun --watch src/index.ts",
+		"start": "bun src/index.ts",
+		"check-types": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@autopost/db": "workspace:*",
+		"@autopost/social": "workspace:*"
+	},
+	"devDependencies": {
+		"@autopost/config": "workspace:*",
+		"@types/bun": "latest",
+		"typescript": "catalog:",
+		"varlock": "catalog:"
+	}
+}

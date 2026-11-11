@@ -1,6 +1,56 @@
 name: autopost
 
+# Deploy na VPS:
+#   1. cp .env.example .env   (preencha APP_URL, BETTER_AUTH_SECRET e POSTGRES_PASSWORD)
+#   2. docker compose up -d --build
+#   3. aponte o proxy reverso (Caddy/Nginx/Traefik) com HTTPS para a porta 3001
+# As redes sociais exigem HTTPS público na APP_URL para o login OAuth e para baixar os vídeos.
+
+x-app-env: &app-env
+  DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@postgres:5432/autopost
+  BETTER_AUTH_URL: ${APP_URL:?defina APP_URL no .env}
+  CORS_ORIGIN: ${APP_URL}
+  APP_URL: ${APP_URL}
+  BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?defina BETTER_AUTH_SECRET no .env}
+  UPLOAD_DIR: /data/uploads
+  # Opcional: chave própria para criptografar os tokens das redes (senão deriva do BETTER_AUTH_SECRET)
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+  # Opcional: IP/CIDR do proxy reverso, para o rate limit enxergar o IP real do cliente
+  TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+  # Opcional: só este e-mail pode criar a conta de administrador no primeiro acesso
+  SETUP_ADMIN_EMAIL: ${SETUP_ADMIN_EMAIL:-}
+  UPLOAD_MAX_MB: ${UPLOAD_MAX_MB:-4096}
+  # Mostra a rede simulada "Demo" (útil para treinar a equipe)
+  DEMO_ENABLED: ${DEMO_ENABLED:-false}
+
 services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: autopost
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Aplica as migrations e sai; web e worker só sobem depois.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    command: ["bun", "packages/db/src/migrate.ts"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   web:
     build:
       context: .
@@ -9,53 +59,50 @@ services:
         - web_env
     init: true
     ports:
-      - "3001:3001"
-    env_file:
-      - path: apps/web/.env
-        required: false
-    environment:
-      BETTER_AUTH_URL: http://localhost:3001
-      CORS_ORIGIN: http://localhost:3001
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/autopost
+      # Só localhost por padrão: o acesso externo passa pelo proxy HTTPS (evita burlar rate limit/TLS)
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-3001}:3001"
+    environment: *app-env
+    volumes:
+      - uploads:/data/uploads
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test:
         [
           "CMD",
           "node",
           "-e",
-          "fetch('http://localhost:3001/').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+          "fetch('http://localhost:3001/login').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
         ]
-      interval: 10s
+      interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 15s
     restart: unless-stopped
 
-  postgres:
-    image: postgres:18
-    container_name: autopost-postgres
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    init: true
     environment:
-      POSTGRES_DB: autopost
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
-    ports:
-      - "5432:5432"
+      <<: *app-env
+      WORKER_POLL_MS: "5000"
+      WORKER_CONCURRENCY: "4"
+      MEDIA_RETENTION_DAYS: ${MEDIA_RETENTION_DAYS:-30}
     volumes:
-      - autopost_postgres_data:/var/lib/postgresql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - uploads:/data/uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:
-  autopost_postgres_data:
+  postgres_data:
+  uploads:
 
-# BuildKit makes these available only while install/build commands run.
+# O build do Next valida as variáveis (varlock): o .env entra só durante o build, via BuildKit.
 secrets:
   web_env:
-    file: apps/web/.env
+    file: .env
