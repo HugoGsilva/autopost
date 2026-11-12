@@ -1,5 +1,6 @@
 "use client";
 
+import { tiktokPostProblems } from "@autopost/social/tiktok-rules";
 import { Badge } from "@autopost/ui/components/badge";
 import { Button } from "@autopost/ui/components/button";
 import {
@@ -36,7 +37,12 @@ import {
 } from "@autopost/ui/components/tabs";
 import { Textarea } from "@autopost/ui/components/textarea";
 import { cn } from "@autopost/ui/lib/utils";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	useMutation,
+	useQueries,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Circle, Link2, Send } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -56,6 +62,7 @@ import {
 	SchedulePicker,
 	scheduleToDate,
 } from "./schedule-picker";
+import { TikTokSettings } from "./tiktok-settings";
 import { type UploadedMedia, useVideoUpload } from "./use-upload";
 import { VideoDrop } from "./video-drop";
 
@@ -182,6 +189,10 @@ export function Composer() {
 						? "Enviando para as redes! Acompanhe o status."
 						: `Agendado para ${formatWhen(res.scheduledAt)}`,
 				);
+				if (tiktokAccounts.length)
+					toast.info(
+						"O TikTok pode levar alguns minutos para processar o vídeo e mostrá-lo no perfil.",
+					);
 				qc.invalidateQueries({ queryKey: orpc.posts.key() });
 				router.push(`/posts?destaque=${res.id}`);
 			},
@@ -205,6 +216,18 @@ export function Composer() {
 				.filter((a): a is AccountItem => Boolean(a)),
 		[selected, usable],
 	);
+	// O TikTok exige consultar a conta (quem publica, privacidades, limites) antes do post.
+	const tiktokAccounts = chosen.filter((a) => a.platform === "tiktok");
+	const creators = useQueries({
+		queries: tiktokAccounts.map((a) => ({
+			...orpc.accounts.tiktokCreatorInfo.queryOptions({
+				input: { accountId: a.id },
+			}),
+			staleTime: 60_000,
+		})),
+	});
+	const creatorFor = (id: string) =>
+		creators[tiktokAccounts.findIndex((a) => a.id === id)]!;
 	const override = (id: string): Override =>
 		overrides[id] ?? { custom: false, caption: "", options: {} };
 	const setOverride = (id: string, patch: Partial<Override>) =>
@@ -213,15 +236,35 @@ export function Composer() {
 		override(id).custom ? override(id).caption : caption;
 
 	const appUrlIsPublic = platforms.data?.appUrlIsPublic ?? false;
+	const tiktokProblems = (a: AccountItem) => {
+		const options = override(a.id).options;
+		if (options.mode === "inbox") return [];
+		const creator = creatorFor(a.id);
+		if (creator.isPending) return ["Carregando a conta do TikTok"];
+		if (creator.isError || !creator.data?.ok)
+			return [
+				creator.data && !creator.data.ok
+					? creator.data.message
+					: "Não foi possível consultar a conta do TikTok",
+			];
+		return tiktokPostProblems(
+			options,
+			creator.data,
+			upload.media?.durationSec,
+		);
+	};
 	const issues = chosen.map((a) => ({
 		account: a,
-		problems: problemsFor(
-			a,
-			platformOf(a.platform),
-			captionFor(a.id),
-			upload.media,
-			appUrlIsPublic,
-		),
+		problems: [
+			...problemsFor(
+				a,
+				platformOf(a.platform),
+				captionFor(a.id),
+				upload.media,
+				appUrlIsPublic,
+			),
+			...(a.platform === "tiktok" ? tiktokProblems(a) : []),
+		],
 		hints: hintsFor(platformOf(a.platform), upload.media),
 	}));
 	const when = scheduleToDate(schedule);
@@ -385,7 +428,7 @@ export function Composer() {
 								Ajustes por rede (opcional)
 							</p>
 							<p className="text-muted-foreground mb-3 text-xs">
-								Legenda diferente, título do YouTube, privacidade do TikTok...
+								Legenda diferente, título do YouTube, pasta do Pinterest...
 							</p>
 							<Tabs
 								defaultValue={chosen[0]!.id}
@@ -426,7 +469,27 @@ export function Composer() {
 					)}
 				</Step>
 
-				<Step n={4} title="Quando">
+				{tiktokAccounts.length > 0 && (
+					<Step n={4} title="Opções do TikTok">
+						<div className="space-y-6">
+							{tiktokAccounts.map((a) => (
+								<div key={a.id} className="space-y-3">
+									{tiktokAccounts.length > 1 && (
+										<p className="text-sm font-semibold">{a.name}</p>
+									)}
+									<TikTokSettings
+										account={a}
+										options={override(a.id).options}
+										creator={creatorFor(a.id)}
+										onChange={(options) => setOverride(a.id, { options })}
+									/>
+								</div>
+							))}
+						</div>
+					</Step>
+				)}
+
+				<Step n={tiktokAccounts.length > 0 ? 5 : 4} title="Quando">
 					<SchedulePicker value={schedule} onChange={setSchedule} />
 				</Step>
 

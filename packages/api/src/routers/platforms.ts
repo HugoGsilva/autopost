@@ -1,15 +1,19 @@
 import { platformConfig, socialAccount } from "@autopost/db/schema/social";
 import {
+	freshAccount,
 	getProvider,
 	isPublicAppUrl,
 	listProviderInfo,
 	PLATFORM_IDS,
 	redirectUri,
+	markAccountError,
+	ProviderError,
 	saveAppCredentials,
+	tiktokCreatorInfo,
 	upsertAccounts,
 } from "@autopost/social";
 import { ORPCError } from "@orpc/server";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import z from "zod";
 
 import type { Context } from "../context";
@@ -125,6 +129,37 @@ export const accountsRouter = {
 			}
 		}),
 
+	/**
+	 * Quem vai publicar e o que a conta permite (privacidade, interações, duração).
+	 * O TikTok exige mostrar isso na tela antes de cada post direto.
+	 */
+	tiktokCreatorInfo: protectedProcedure
+		.input(z.object({ accountId: z.string() }))
+		.handler(async ({ context, input }) => {
+			const [row] = await context.db
+				.select()
+				.from(socialAccount)
+				.where(
+					and(
+						eq(socialAccount.id, input.accountId),
+						eq(socialAccount.connectedBy, context.session.user.id),
+						eq(socialAccount.platform, "tiktok"),
+					),
+				);
+			if (!row)
+				throw new ORPCError("NOT_FOUND", { message: "Conta não encontrada" });
+			try {
+				const { acc } = await freshAccount(context.db, row);
+				const info = await tiktokCreatorInfo(acc.credentials.accessToken!);
+				return { ok: true as const, ...info };
+			} catch (err) {
+				const message = (err as Error).message;
+				if (err instanceof ProviderError && err.status === 401)
+					await markAccountError(context.db, row.id, message, "expired");
+				return { ok: false as const, message: tiktokBlockMessage(message) };
+			}
+		}),
+
 	rename: protectedProcedure
 		.input(z.object({ id: z.string(), name: z.string().trim().min(1).max(80) }))
 		.handler(async ({ context, input }) => {
@@ -161,4 +196,17 @@ async function assertCanManage(
 		.where(eq(socialAccount.id, accountId));
 	if (!row || row.connectedBy !== context.session.user.id)
 		throw new ORPCError("NOT_FOUND", { message: "Conta não encontrada" });
+}
+
+/** Erros do TikTok que impedem postar agora, em linguagem simples. */
+function tiktokBlockMessage(raw: string) {
+	if (raw.includes("spam_risk_too_many_posts"))
+		return "Esta conta atingiu o limite de posts do TikTok por hoje. Tente novamente amanhã.";
+	if (raw.includes("spam_risk_user_banned_from_posting"))
+		return "O TikTok bloqueou novas publicações nesta conta.";
+	if (raw.includes("reached_active_user_cap"))
+		return "O TikTok atingiu o limite diário de contas que podem postar pelo Cast. Tente mais tarde.";
+	if (/access_token|401|expirad/i.test(raw))
+		return "A conexão com o TikTok expirou. Reconecte a conta em Contas.";
+	return `O TikTok não liberou o post agora: ${raw}`;
 }

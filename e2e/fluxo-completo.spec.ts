@@ -464,7 +464,8 @@ test("cadastro livre entra no teste grátis; com o acesso encerrado não publica
 }) => {
 	const trial = await browser.newPage();
 	await trial.goto("/");
-	await trial.getByRole("link", { name: "Testar grátis" }).first().click();
+	// botão com cara de link: o Button do base-ui mantém role="button" no <a>
+	await trial.locator('header a[href="/login?modo=cadastro"]').click();
 	await expect(
 		trial.getByRole("heading", { name: "Crie sua conta" }),
 	).toBeVisible();

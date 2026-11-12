@@ -11,6 +11,7 @@ import {
 	mediaPublicUrl,
 	randomToken,
 	refreshPostStatus,
+	tiktokPostProblems,
 } from "@autopost/social";
 import { ORPCError } from "@orpc/server";
 import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
@@ -82,6 +83,9 @@ export function validateTargets(
 			);
 		if (acc.status === "expired")
 			problems.push(`${label}: conexão expirada, reconecte a conta`);
+		if (acc.platform === "tiktok")
+			for (const issue of tiktokPostProblems(t.options))
+				problems.push(`${label}: ${issue}`);
 	}
 	return problems;
 }
