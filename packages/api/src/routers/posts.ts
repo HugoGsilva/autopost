@@ -1,3 +1,4 @@
+import { user } from "@autopost/db/schema/auth";
 import {
 	media,
 	post,
@@ -186,16 +187,6 @@ export const postsRouter = {
 		.handler(async ({ context, input }) => {
 			const { db } = context;
 			const userId = context.session.user.id;
-			if (context.session.user.accessUntil) {
-				const [used] = await db
-					.select({ n: sql<number>`count(*)::int` })
-					.from(post)
-					.where(eq(post.userId, userId));
-				if ((used?.n ?? 0) >= TRIAL_MAX_POSTS)
-					throw new ORPCError("FORBIDDEN", {
-						message: `O teste grátis permite até ${TRIAL_MAX_POSTS} posts. Fale com a IA2S para continuar.`,
-					});
-			}
 			const [file] = await db
 				.select()
 				.from(media)
@@ -232,6 +223,20 @@ export const postsRouter = {
 					: new Date();
 			const postId = randomToken(12);
 			await db.transaction(async (tx) => {
+				// Teste grátis: reserva o saldo na mesma transação (atômico, e apagar não devolve).
+				if (context.session.user.accessUntil) {
+					const [slot] = await tx
+						.update(user)
+						.set({ trialPosts: sql`${user.trialPosts} + 1` })
+						.where(
+							and(eq(user.id, userId), lt(user.trialPosts, TRIAL_MAX_POSTS)),
+						)
+						.returning({ id: user.id });
+					if (!slot)
+						throw new ORPCError("FORBIDDEN", {
+							message: `O teste grátis permite até ${TRIAL_MAX_POSTS} posts. Fale com a IA2S para continuar.`,
+						});
+				}
 				await tx.insert(post).values({
 					id: postId,
 					userId,

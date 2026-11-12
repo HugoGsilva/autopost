@@ -426,6 +426,28 @@ describe("publicação (fetch simulado)", () => {
 			m.calls[2]!.body as { record: { embed: { $type: string } } }
 		).record;
 		expect(record.embed.$type).toBe("app.bsky.embed.video");
+		expect(m.calls.every((c) => c.redirect === "manual")).toBe(true);
+	});
+
+	test("Bluesky: não segue redirecionamento nem expõe o corpo da resposta", async () => {
+		const m = mockFetch([
+			[
+				"POST https://bsky.social/xrpc/com.atproto.server.createSession",
+				() =>
+					new Response("dado interno", {
+						status: 302,
+						headers: { location: "http://10.0.0.1/" },
+					}),
+			],
+		]);
+		restore = m.restore;
+		const err = await providers
+			.bluesky.connectManual!({ identifier: "a", password: "b" })
+			.catch((e: Error) => e);
+		expect(err).toBeInstanceOf(Error);
+		expect((err as Error).message).not.toContain("dado interno");
+		expect(m.calls).toHaveLength(1);
+		expect(m.calls[0]!.redirect).toBe("manual");
 	});
 
 	test("Telegram: sendVideo com link público do canal", async () => {

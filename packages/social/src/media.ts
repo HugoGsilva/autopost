@@ -50,6 +50,8 @@ export async function saveUpload(
 		durationSec?: number | null;
 		width?: number | null;
 		height?: number | null;
+		/** Teto menor para este envio (ex.: espaço que resta no teste grátis). */
+		limit?: { bytes: number; message: string };
 	},
 ) {
 	const id = randomToken(12);
@@ -58,16 +60,18 @@ export async function saveUpload(
 	const abs = mediaAbsolutePath(storagePath);
 	await mkdir(path.dirname(abs), { recursive: true });
 
+	const limit =
+		input.limit && input.limit.bytes < MAX_UPLOAD_BYTES
+			? input.limit
+			: {
+					bytes: MAX_UPLOAD_BYTES,
+					message: `Arquivo maior que o limite de ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB`,
+				};
 	let bytes = 0;
 	const limiter = new TransformStream<Uint8Array, Uint8Array>({
 		transform(chunk, ctrl) {
 			bytes += chunk.byteLength;
-			if (bytes > MAX_UPLOAD_BYTES)
-				ctrl.error(
-					new Error(
-						`Arquivo maior que o limite de ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB`,
-					),
-				);
+			if (bytes > limit.bytes) ctrl.error(new Error(limit.message));
 			else ctrl.enqueue(chunk);
 		},
 	});
