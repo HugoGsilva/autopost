@@ -1,5 +1,12 @@
 import { defineRelationsPart } from "drizzle-orm";
-import { boolean, index, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import {
+	boolean,
+	index,
+	integer,
+	pgTable,
+	text,
+	timestamp,
+} from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
 	id: text("id").primaryKey(),
@@ -11,6 +18,8 @@ export const user = pgTable("user", {
 	/** Fim do acesso (teste grátis). null = sem prazo. */
 	accessUntil: timestamp("access_until", { withTimezone: true }),
 	termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
+	/** Posts já criados no teste grátis. Só aumenta: apagar post não devolve saldo. */
+	trialPosts: integer("trial_posts").default(0).notNull(),
 	createdAt: timestamp("created_at", { withTimezone: true })
 		.defaultNow()
 		.notNull(),

@@ -5,21 +5,45 @@ import { MOV, MP4, type Provider, WEBM } from "../types";
 
 /* ───────────────────────── Bluesky (senha de app) ───────────────────────── */
 
+/** Teto de espera do Demo: o valor vem do usuário e o worker não pode ficar preso nele. */
+const demoDelay = (v: unknown) => Math.min(Math.max(Number(v) || 1500, 0), 10_000);
+
+const BSKY = "https://bsky.social";
+
+/** Só a mensagem do padrão XRPC: nunca devolve o corpo cru de um servidor qualquer. */
+const xrpcError = (body: unknown) =>
+	body && typeof body === "object" && typeof (body as any).message === "string"
+		? String((body as any).message).slice(0, 300)
+		: "resposta inesperada do servidor";
+
+/**
+ * Chamada ao servidor do Bluesky. O servidor pode ser digitado pelo usuário, então
+ * (anti-SSRF) é revalidado a cada chamada e redirecionamentos nunca são seguidos.
+ */
+async function xrpc(
+	service: string,
+	method: string,
+	opts: Parameters<typeof request>[1] = {},
+) {
+	if (service !== BSKY) await assertPublicHttpsUrl(service);
+	// Tempo e tamanho limitados: um servidor lento ou gigante não pode prender o worker.
+	const upload = method === "com.atproto.repo.uploadBlob";
+	return request(`${service}/xrpc/${method}`, {
+		...opts,
+		redirect: "manual",
+		signal: AbortSignal.timeout(upload ? 15 * 60_000 : 60_000),
+		maxResponseBytes: 1024 * 1024,
+		errorMessage: xrpcError,
+	});
+}
+
 async function bskySession(c: Record<string, unknown>) {
-	const raw = String(c.service || "https://bsky.social").trim();
-	// Servidor digitado pelo usuário: valida (anti-SSRF) e usa só a origem.
-	const service =
-		raw === "https://bsky.social"
-			? raw
-			: (await assertPublicHttpsUrl(raw)).origin;
-	const { data } = await request(
-		`${service}/xrpc/com.atproto.server.createSession`,
-		{
-			method: "POST",
-			redirect: "manual",
-			json: { identifier: c.identifier, password: c.password },
-		},
-	);
+	const raw = String(c.service || BSKY).trim();
+	const service = raw === BSKY ? raw : (await assertPublicHttpsUrl(raw)).origin;
+	const { data } = await xrpc(service, "com.atproto.server.createSession", {
+		method: "POST",
+		json: { identifier: c.identifier, password: c.password },
+	});
 	return {
 		service,
 		...(data as { accessJwt: string; did: string; handle: string }),
@@ -83,13 +107,10 @@ export const bluesky: Provider = {
 
 	async connectManual(f) {
 		const s = await bskySession(f);
-		const { data: profile } = await request(
-			`${s.service}/xrpc/app.bsky.actor.getProfile`,
-			{
-				query: { actor: s.did },
-				bearer: s.accessJwt,
-			},
-		);
+		const { data: profile } = await xrpc(s.service, "app.bsky.actor.getProfile", {
+			query: { actor: s.did },
+			bearer: s.accessJwt,
+		});
 		return {
 			externalId: s.did,
 			name: profile.displayName || s.handle,
@@ -105,8 +126,9 @@ export const bluesky: Provider = {
 
 	async publish({ account, media, caption }) {
 		const s = await bskySession(account.credentials);
-		const { data: blob } = await request(
-			`${s.service}/xrpc/com.atproto.repo.uploadBlob`,
+		const { data: blob } = await xrpc(
+			s.service,
+			"com.atproto.repo.uploadBlob",
 			{
 				method: "POST",
 				bearer: s.accessJwt,
@@ -121,8 +143,9 @@ export const bluesky: Provider = {
 		};
 		if (media.width && media.height)
 			embed.aspectRatio = { width: media.width, height: media.height };
-		const { data } = await request(
-			`${s.service}/xrpc/com.atproto.repo.createRecord`,
+		const { data } = await xrpc(
+			s.service,
+			"com.atproto.repo.createRecord",
 			{
 				method: "POST",
 				bearer: s.accessJwt,
@@ -319,12 +342,12 @@ export const demo: Provider = {
 			externalId: `demo-${randomToken(6)}`,
 			name,
 			username: name.toLowerCase().replace(/\s+/g, "."),
-			credentials: { delayMs: Number(f.delayMs) || 1500 },
+			credentials: { delayMs: demoDelay(f.delayMs) },
 		};
 	},
 
 	async publish({ account, caption, log }) {
-		await sleep(Number(account.credentials.delayMs) || 1500);
+		await sleep(demoDelay(account.credentials.delayMs));
 		if (/#falha\b/i.test(caption))
 			throw new ProviderError("Falha simulada (#falha na legenda)");
 		log("Publicação simulada");

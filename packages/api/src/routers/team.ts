@@ -94,7 +94,13 @@ export const teamRouter = {
 				});
 			await context.db
 				.update(user)
-				.set({ accessUntil: input.until })
+				.set({
+					accessUntil: input.until,
+					// Estender o acesso dá um novo saldo de posts; encerrar mantém o histórico.
+					...(!input.until || input.until > new Date()
+						? { trialPosts: 0 }
+						: {}),
+				})
 				.where(eq(user.id, input.id));
 			return { ok: true };
 		}),

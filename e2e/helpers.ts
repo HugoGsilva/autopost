@@ -20,10 +20,20 @@ export const TRIAL_USER = {
 };
 
 export async function login(page: Page, user = ADMIN) {
-	await page.goto("/login");
-	await page.getByLabel("E-mail").fill(user.email);
-	await page.getByLabel("Senha", { exact: true }).fill(user.password);
-	await page.getByRole("button", { name: "Entrar" }).click();
+	// Todos os logins saem do mesmo IP: se bater no limite de tentativas do login, espera a janela.
+	const limited = page.getByText(/Muitas tentativas/);
+	for (let attempt = 0; ; attempt++) {
+		await page.goto("/login");
+		await page.getByLabel("E-mail").fill(user.email);
+		await page.getByLabel("Senha", { exact: true }).fill(user.password);
+		await page.getByRole("button", { name: "Entrar" }).click();
+		const hitLimit = await Promise.race([
+			page.waitForURL(/\/painel/, { timeout: 15_000 }).then(() => false),
+			limited.waitFor({ timeout: 15_000 }).then(() => true),
+		]).catch(() => false);
+		if (!hitLimit || attempt >= 2) break;
+		await page.waitForTimeout(11_000);
+	}
 	await expect(page).toHaveURL(/\/painel/);
 }
 

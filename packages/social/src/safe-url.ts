@@ -23,6 +23,12 @@ export function isPrivateIp(ip: string): boolean {
 	const v6 = ip.toLowerCase();
 	const mapped = v6.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
 	if (mapped) return isPrivateIPv4(mapped[1]!);
+	// Mesma coisa em hex, como o URL normaliza: [::ffff:127.0.0.1] → ::ffff:7f00:1
+	const hex = v6.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+	if (hex) {
+		const [hi, lo] = [parseInt(hex[1]!, 16), parseInt(hex[2]!, 16)];
+		return isPrivateIPv4(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
+	}
 	return (
 		v6 === "::" || v6 === "::1" || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6)
 	);

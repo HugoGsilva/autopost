@@ -9,6 +9,7 @@ export type Call = {
 	url: string;
 	headers: Headers;
 	body: unknown;
+	redirect?: RequestRedirect;
 };
 type Handler = (call: Call) => unknown | Response;
 
@@ -29,7 +30,7 @@ export function mockFetch(routes: [string, Handler][]) {
 				body = JSON.parse(body);
 			} catch {}
 		} else if (body instanceof URLSearchParams) body = Object.fromEntries(body);
-		const call = { method, url, headers, body };
+		const call = { method, url, headers, body, redirect: init?.redirect };
 		calls.push(call);
 		const route = routes.find(([key]) => {
 			const [m, prefix] = key.split(" ");

@@ -22,17 +22,17 @@ export async function POST(req: NextRequest) {
 		return Response.json({ error: "Não autenticado" }, { status: 401 });
 	if (accessExpired(session.user))
 		return Response.json({ error: TRIAL_ENDED }, { status: 403 });
+	// Teste grátis: o content-length só serve para recusar cedo; o teto real é
+	// aplicado nos bytes gravados (um envio sem content-length passaria daqui).
+	let limit: { bytes: number; message: string } | undefined;
 	if (session.user.accessUntil) {
-		const used = await mediaUsageBytes(db, session.user.id);
+		const message = `O teste grátis tem ${TRIAL.storageGb} GB para vídeos. Fale com a IA2S para continuar.`;
+		const left =
+			TRIAL_STORAGE_BYTES - (await mediaUsageBytes(db, session.user.id));
 		const incoming = Number(req.headers.get("content-length")) || 0;
-		if (used + incoming > TRIAL_STORAGE_BYTES)
-			return Response.json(
-				{
-					error:
-						`O teste grátis tem ${TRIAL.storageGb} GB para vídeos. Fale com a IA2S para continuar.`,
-				},
-				{ status: 413 },
-			);
+		if (left <= 0 || incoming > left)
+			return Response.json({ error: message }, { status: 413 });
+		limit = { bytes: left, message };
 	}
 
 	const mimeType = (req.headers.get("content-type") ?? "")
@@ -57,6 +57,7 @@ export async function POST(req: NextRequest) {
 			durationSec: num(req.headers.get("x-duration")),
 			width: num(req.headers.get("x-width")),
 			height: num(req.headers.get("x-height")),
+			limit,
 		});
 		return Response.json({
 			id: row.id,
