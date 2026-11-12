@@ -101,7 +101,8 @@ await run("bun", ["x", "drizzle-kit", "push", "--force"], "packages/db", {
 	tag: "db",
 });
 if (!process.env.E2E_SKIP_BUILD)
-	await run("bun", ["x", "next", "build"], "apps/web", {
+	// "build" do web gera antes os tipos da API (packages/api/dist), que o next build usa.
+	await run("bun", ["run", "build"], "apps/web", {
 		wait: true,
 		tag: "build",
 	});
