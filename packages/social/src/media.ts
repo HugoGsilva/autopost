@@ -6,7 +6,7 @@ import { pipeline } from "node:stream/promises";
 
 import type { Database } from "@autopost/db";
 import { media } from "@autopost/db/schema/social";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { randomToken } from "./crypto";
 import { appUrl, uploadDir } from "./env";
@@ -143,6 +143,15 @@ export async function looksLikeVideo(
 	} finally {
 		await fh.close();
 	}
+}
+
+/** Espaço ocupado pelos vídeos de um usuário (cota do teste grátis). */
+export async function mediaUsageBytes(db: Database, userId: string) {
+	const [row] = await db
+		.select({ bytes: sql<string>`coalesce(sum(${media.size}), 0)` })
+		.from(media)
+		.where(eq(media.userId, userId));
+	return Number(row?.bytes ?? 0);
 }
 
 export async function getMedia(db: Database, id: string) {

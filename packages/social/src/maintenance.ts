@@ -1,8 +1,13 @@
 import { rm } from "node:fs/promises";
 
 import type { Database } from "@autopost/db";
-import { media, workerHeartbeat } from "@autopost/db/schema/social";
-import { desc, inArray, sql } from "drizzle-orm";
+import {
+	media,
+	post,
+	socialAccount,
+	workerHeartbeat,
+} from "@autopost/db/schema/social";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 
 import { mediaAbsolutePath } from "./media";
 
@@ -68,4 +73,19 @@ export async function cleanupMedia(
 			),
 		);
 	return rows.length;
+}
+
+/** Apaga posts, contas conectadas e vídeos de um usuário (exclusão de conta, LGPD). */
+export async function deleteUserData(db: Database, userId: string) {
+	const files = await db
+		.select({ storagePath: media.storagePath })
+		.from(media)
+		.where(eq(media.userId, userId));
+	await db.transaction(async (tx) => {
+		await tx.delete(post).where(eq(post.userId, userId));
+		await tx.delete(socialAccount).where(eq(socialAccount.connectedBy, userId));
+		await tx.delete(media).where(eq(media.userId, userId));
+	});
+	for (const f of files)
+		await rm(mediaAbsolutePath(f.storagePath), { force: true });
 }

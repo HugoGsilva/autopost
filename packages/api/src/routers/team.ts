@@ -1,11 +1,11 @@
 import { account, session, user } from "@autopost/db/schema/auth";
-import { randomToken } from "@autopost/social";
+import { deleteUserData, randomToken } from "@autopost/social";
 import { ORPCError } from "@orpc/server";
-import { hashPassword } from "better-auth/crypto";
+import { hashPassword, verifyPassword } from "better-auth/crypto";
 import { and, asc, eq, sql } from "drizzle-orm";
 import z from "zod";
 
-import { adminProcedure, publicProcedure } from "../index";
+import { adminProcedure, protectedProcedure, publicProcedure } from "../index";
 
 export const teamRouter = {
 	/** Usado pela tela de login: sem usuários, mostra o cadastro do primeiro admin. */
@@ -23,6 +23,7 @@ export const teamRouter = {
 				name: user.name,
 				email: user.email,
 				role: user.role,
+				accessUntil: user.accessUntil,
 				createdAt: user.createdAt,
 			})
 			.from(user)
@@ -83,6 +84,47 @@ export const teamRouter = {
 			return { ok: true };
 		}),
 
+	/** Prazo de acesso de um cliente: data nova, ou null para liberar sem prazo. */
+	setAccess: adminProcedure
+		.input(z.object({ id: z.string(), until: z.coerce.date().nullable() }))
+		.handler(async ({ context, input }) => {
+			if (input.id === context.session.user.id)
+				throw new ORPCError("BAD_REQUEST", {
+					message: "Você não pode mudar o próprio acesso",
+				});
+			await context.db
+				.update(user)
+				.set({ accessUntil: input.until })
+				.where(eq(user.id, input.id));
+			return { ok: true };
+		}),
+
+	/** Exclusão da própria conta pelo usuário (LGPD): pede a senha para confirmar. */
+	deleteMe: protectedProcedure
+		.input(z.object({ password: z.string().min(1) }))
+		.handler(async ({ context, input }) => {
+			const me = context.session.user;
+			if (me.role === "admin")
+				throw new ORPCError("BAD_REQUEST", {
+					message:
+						"Administradores não podem excluir a própria conta. Peça a outro administrador.",
+				});
+			const [cred] = await context.db
+				.select({ password: account.password })
+				.from(account)
+				.where(
+					and(eq(account.userId, me.id), eq(account.providerId, "credential")),
+				);
+			if (
+				!cred?.password ||
+				!(await verifyPassword({ hash: cred.password, password: input.password }))
+			)
+				throw new ORPCError("BAD_REQUEST", { message: "Senha incorreta" });
+			await deleteUserData(context.db, me.id);
+			await context.db.delete(user).where(eq(user.id, me.id));
+			return { ok: true };
+		}),
+
 	resetPassword: adminProcedure
 		.input(
 			z.object({
@@ -120,6 +162,7 @@ export const teamRouter = {
 				throw new ORPCError("BAD_REQUEST", {
 					message: "Você não pode remover a si mesmo",
 				});
+			await deleteUserData(context.db, input.id);
 			await context.db.delete(user).where(eq(user.id, input.id));
 			return { ok: true };
 		}),

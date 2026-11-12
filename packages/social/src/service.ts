@@ -1,6 +1,6 @@
 import type { Database } from "@autopost/db";
 import { platformConfig, socialAccount } from "@autopost/db/schema/social";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import {
 	decrypt,
@@ -60,6 +60,9 @@ export async function saveAppCredentials(
 		});
 }
 
+export const ACCOUNT_TAKEN =
+	"essa conta já está conectada em outro cadastro do Cast.";
+
 /** Insere ou atualiza (reconexão) as contas retornadas pela plataforma. */
 export async function upsertAccounts(
 	db: Database,
@@ -67,6 +70,22 @@ export async function upsertAccounts(
 	accounts: ConnectedAccount[],
 	userId: string,
 ) {
+	if (!accounts.length) return [];
+	// Cada conta da rede pertence a um só cadastro: ninguém sobrescreve a conta de outra pessoa.
+	const taken = await db
+		.select({ connectedBy: socialAccount.connectedBy })
+		.from(socialAccount)
+		.where(
+			and(
+				eq(socialAccount.platform, platform),
+				inArray(
+					socialAccount.externalId,
+					accounts.map((a) => a.externalId),
+				),
+			),
+		);
+	if (taken.some((t) => t.connectedBy && t.connectedBy !== userId))
+		throw new Error(ACCOUNT_TAKEN);
 	const ids: string[] = [];
 	for (const a of accounts) {
 		const values = {
@@ -90,7 +109,7 @@ export async function upsertAccounts(
 			})
 			.onConflictDoUpdate({
 				target: [socialAccount.platform, socialAccount.externalId],
-				set: values,
+				set: { ...values, connectedBy: userId },
 			})
 			.returning({ id: socialAccount.id });
 		if (row) ids.push(row.id);

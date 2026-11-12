@@ -6,9 +6,14 @@ import { LoginForm } from "./login-form";
 
 export const metadata = { title: "Entrar" };
 
-export default async function LoginPage() {
+export default async function LoginPage({
+	searchParams,
+}: {
+	searchParams: Promise<{ modo?: string }>;
+}) {
 	const session = await getSession();
 	if (session?.user) redirect("/painel");
+	const { modo } = await searchParams;
 
 	return (
 		<div className="bg-background grid min-h-svh lg:grid-cols-[1.1fr_1fr]">
@@ -39,7 +44,7 @@ export default async function LoginPage() {
 				</p>
 			</section>
 			<section className="flex items-center justify-center px-4 py-12">
-				<LoginForm />
+				<LoginForm initialMode={modo === "cadastro" ? "signup" : "login"} />
 			</section>
 		</div>
 	);

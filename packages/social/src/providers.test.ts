@@ -174,12 +174,15 @@ describe("publicação (fetch simulado)", () => {
 		);
 	});
 
-	test("TikTok: privacidade cai para SELF_ONLY quando não auditado", async () => {
+	test("TikTok: envia exatamente as opções que o usuário escolheu", async () => {
 		const m = mockFetch([
 			[
 				"POST https://open.tiktokapis.com/v2/post/publish/creator_info/query/",
 				() => ({
-					data: { privacy_level_options: ["SELF_ONLY"] },
+					data: {
+						privacy_level_options: ["PUBLIC_TO_EVERYONE", "SELF_ONLY"],
+						duet_disabled: true,
+					},
 					error: { code: "ok" },
 				}),
 			],
@@ -205,14 +208,32 @@ describe("publicação (fetch simulado)", () => {
 		restore = m.restore;
 		const logs: string[] = [];
 		const res = await providers.tiktok.publish(
-			publishInput({ media, log: (l) => logs.push(l) }),
+			publishInput({
+				media,
+				log: (l) => logs.push(l),
+				options: {
+					privacy: "PUBLIC_TO_EVERYONE",
+					allowComment: "true",
+					allowDuet: "true",
+					commercial: "true",
+					brandOrganic: "true",
+				},
+			}),
 		);
 		expect(res.externalId).toBe("777");
 		const init = m.calls[1]!.body as {
-			post_info: { privacy_level: string };
+			post_info: Record<string, unknown>;
 			source_info: { video_size: number; total_chunk_count: number };
 		};
-		expect(init.post_info.privacy_level).toBe("SELF_ONLY");
+		expect(init.post_info).toMatchObject({
+			privacy_level: "PUBLIC_TO_EVERYONE",
+			disable_comment: false,
+			// o criador desligou o Duet na conta: vale o que está no TikTok
+			disable_duet: true,
+			disable_stitch: true,
+			brand_organic_toggle: true,
+			brand_content_toggle: false,
+		});
 		expect(init.source_info).toMatchObject({
 			video_size: media.size,
 			total_chunk_count: 1,
@@ -220,7 +241,60 @@ describe("publicação (fetch simulado)", () => {
 		expect(m.calls[2]!.headers.get("content-range")).toBe(
 			`bytes 0-${media.size - 1}/${media.size}`,
 		);
-		expect(logs.some((l) => l.includes("SELF_ONLY"))).toBe(true);
+		expect(logs.some((l) => l.includes("PUBLIC_TO_EVERYONE"))).toBe(true);
+	});
+
+	test("TikTok: sem privacidade escolhida não publica nem troca sozinho", async () => {
+		const creator = (options: string[]) =>
+			mockFetch([
+				[
+					"POST https://open.tiktokapis.com/v2/post/publish/creator_info/query/",
+					() => ({
+						data: { privacy_level_options: options },
+						error: { code: "ok" },
+					}),
+				],
+			]);
+		let m = creator(["SELF_ONLY"]);
+		restore = m.restore;
+		await expect(
+			providers.tiktok.publish(publishInput({ media })),
+		).rejects.toThrow(/Escolha quem pode ver/);
+		expect(m.calls).toHaveLength(1);
+		m.restore();
+
+		m = creator(["SELF_ONLY"]);
+		restore = m.restore;
+		await expect(
+			providers.tiktok.publish(
+				publishInput({ media, options: { privacy: "PUBLIC_TO_EVERYONE" } }),
+			),
+		).rejects.toThrow(/não está disponível/);
+		expect(m.calls).toHaveLength(1);
+	});
+
+	test("TikTok: conteúdo de marca exige rótulo e não pode ser privado", async () => {
+		const { tiktokPostProblems } = await import("./tiktok-rules");
+		expect(
+			tiktokPostProblems({ privacy: "PUBLIC_TO_EVERYONE", commercial: "true" }),
+		).toEqual([
+			"Indique se o conteúdo promove você, uma marca de terceiros ou os dois",
+		]);
+		expect(
+			tiktokPostProblems({
+				privacy: "SELF_ONLY",
+				commercial: "true",
+				brandContent: "true",
+			}),
+		).toEqual(["Conteúdo de marca não pode ser publicado como “Só eu”"]);
+		expect(tiktokPostProblems({ mode: "inbox" })).toEqual([]);
+		expect(
+			tiktokPostProblems(
+				{ privacy: "SELF_ONLY" },
+				{ privacyOptions: ["SELF_ONLY"], maxDurationSec: 60 },
+				90,
+			),
+		).toEqual(["Esta conta do TikTok aceita vídeos de até 1 min"]);
 	});
 
 	test("TikTok: erro da API vira ProviderError legível", async () => {
@@ -476,7 +550,9 @@ describe("segurança e mensagens", () => {
 			],
 		]);
 		restore = m.restore;
-		const res = await providers.tiktok.publish(publishInput({ media }));
+		const res = await providers.tiktok.publish(
+			publishInput({ media, options: { privacy: "SELF_ONLY" } }),
+		);
 		expect(res.note).toMatch(/Só eu/);
 	});
 });

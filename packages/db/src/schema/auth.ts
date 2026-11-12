@@ -8,6 +8,9 @@ export const user = pgTable("user", {
 	emailVerified: boolean("email_verified").default(false).notNull(),
 	image: text("image"),
 	role: text("role").default("member").notNull(),
+	/** Fim do acesso (teste grátis). null = sem prazo. */
+	accessUntil: timestamp("access_until", { withTimezone: true }),
+	termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
 	createdAt: timestamp("created_at", { withTimezone: true })
 		.defaultNow()
 		.notNull(),

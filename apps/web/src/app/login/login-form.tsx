@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@autopost/ui/components/button";
+import { Checkbox } from "@autopost/ui/components/checkbox";
 import {
 	Field,
 	FieldError,
@@ -12,20 +13,34 @@ import { Skeleton } from "@autopost/ui/components/skeleton";
 import { Spinner } from "@autopost/ui/components/spinner";
 import { useQuery } from "@tanstack/react-query";
 import { Eye, EyeOff } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { BrandMark } from "@/components/brand";
 import { authClient } from "@/lib/auth-client";
+import { CONTACT, TRIAL } from "@/lib/site";
 import { orpc } from "@/utils/orpc";
 
-export function LoginForm() {
+export function LoginForm({
+	initialMode = "login",
+}: {
+	initialMode?: "login" | "signup";
+}) {
 	const router = useRouter();
 	const setup = useQuery(orpc.team.setupStatus.queryOptions());
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [showPassword, setShowPassword] = useState(false);
+	const [mode, setMode] = useState(initialMode);
+	const [accepted, setAccepted] = useState(false);
 	const firstAccess = setup.data && !setup.data.hasUsers;
+	const signup = firstAccess || mode === "signup";
+
+	function switchMode(next: "login" | "signup") {
+		setMode(next);
+		setError(null);
+	}
 
 	async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
 		e.preventDefault();
@@ -35,13 +50,20 @@ export function LoginForm() {
 		const password = String(data.get("password") ?? "");
 		if (password.length < 8)
 			return setError("A senha precisa ter pelo menos 8 caracteres.");
+		if (signup && !accepted)
+			return setError(
+				"Para criar a conta, aceite os Termos de Uso e a Política de Privacidade.",
+			);
 		setLoading(true);
-		const res = firstAccess
-			? await authClient.signUp.email({
-					name: String(data.get("name") ?? "").trim() || email,
-					email,
-					password,
-				})
+		// acceptTerms não faz parte do tipo do Better Auth: o servidor confere no hook de cadastro.
+		const signUpBody = {
+			name: String(data.get("name") ?? "").trim() || email,
+			email,
+			password,
+			acceptTerms: true,
+		};
+		const res = signup
+			? await authClient.signUp.email(signUpBody)
 			: await authClient.signIn.email({ email, password });
 		setLoading(false);
 		if (res.error) {
@@ -71,16 +93,22 @@ export function LoginForm() {
 			) : (
 				<>
 					<h2 className="font-display text-3xl">
-						{firstAccess ? "Primeiro acesso" : "Bem-vindo de volta"}
+						{firstAccess
+							? "Primeiro acesso"
+							: signup
+								? "Crie sua conta"
+								: "Bem-vindo de volta"}
 					</h2>
 					<p className="text-muted-foreground mt-2 mb-8">
 						{firstAccess
 							? "Crie a conta de administrador. Depois você convida a equipe em Configurações."
-							: "Entre para publicar seus vídeos."}
+							: signup
+								? `Teste grátis por ${TRIAL.days} dias, sem cartão. Depois, é só falar com a gente para continuar.`
+								: "Entre para publicar seus vídeos."}
 					</p>
 					<form onSubmit={onSubmit}>
 						<FieldGroup>
-							{firstAccess && (
+							{signup && (
 								<Field>
 									<FieldLabel htmlFor="name">Seu nome</FieldLabel>
 									<Input
@@ -110,9 +138,7 @@ export function LoginForm() {
 										id="password"
 										name="password"
 										type={showPassword ? "text" : "password"}
-										autoComplete={
-											firstAccess ? "new-password" : "current-password"
-										}
+										autoComplete={signup ? "new-password" : "current-password"}
 										required
 										className="h-11 pr-12"
 									/>
@@ -133,6 +159,31 @@ export function LoginForm() {
 								</div>
 								{error && <FieldError>{error}</FieldError>}
 							</Field>
+							{signup && (
+								<Field orientation="horizontal">
+									<Checkbox
+										id="accept-terms"
+										checked={accepted}
+										onCheckedChange={(v) => setAccepted(v === true)}
+									/>
+									<FieldLabel htmlFor="accept-terms" className="font-normal">
+										<span>
+											Li e aceito os{" "}
+											<Link href="/termos" target="_blank" className="underline">
+												Termos de Uso
+											</Link>{" "}
+											e a{" "}
+											<Link
+												href="/privacidade"
+												target="_blank"
+												className="underline"
+											>
+												Política de Privacidade
+											</Link>
+										</span>
+									</FieldLabel>
+								</Field>
+							)}
 							<Button
 								type="submit"
 								size="lg"
@@ -140,11 +191,42 @@ export function LoginForm() {
 								disabled={loading}
 							>
 								{loading && <Spinner />}
-								{firstAccess ? "Criar conta e entrar" : "Entrar"}
+								{signup ? "Criar conta e entrar" : "Entrar"}
 							</Button>
 							{!firstAccess && (
 								<p className="text-muted-foreground text-center text-sm">
-									Esqueceu a senha? Peça ao administrador para redefinir.
+									{signup ? (
+										<>
+											Já tem conta?{" "}
+											<button
+												type="button"
+												className="text-foreground underline"
+												onClick={() => switchMode("login")}
+											>
+												Entrar
+											</button>
+										</>
+									) : (
+										<>
+											Ainda não tem conta?{" "}
+											<button
+												type="button"
+												className="text-foreground underline"
+												onClick={() => switchMode("signup")}
+											>
+												Criar conta grátis
+											</button>
+										</>
+									)}
+								</p>
+							)}
+							{!signup && (
+								<p className="text-muted-foreground text-center text-sm">
+									Esqueceu a senha? Fale com a IA2S em{" "}
+									<a href={`mailto:${CONTACT.email}`} className="underline">
+										{CONTACT.email}
+									</a>
+									.
 								</p>
 							)}
 						</FieldGroup>

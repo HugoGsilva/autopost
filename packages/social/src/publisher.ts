@@ -1,4 +1,5 @@
 import type { Database } from "@autopost/db";
+import { user } from "@autopost/db/schema/auth";
 import {
 	media,
 	post,
@@ -66,15 +67,62 @@ export function retryDelayMs(attempt: number): number {
 	return [60_000, 5 * 60_000, 15 * 60_000][attempt - 1] ?? 15 * 60_000;
 }
 
+/** Credenciais prontas para chamar a rede: renova o token se estiver para vencer. */
+export async function freshAccount(
+	db: Database,
+	account: typeof socialAccount.$inferSelect,
+	log: Logger = () => {},
+) {
+	const provider = getProvider(account.platform);
+	const app =
+		provider.auth === "oauth"
+			? await getAppCredentials(db, account.platform)
+			: null;
+	if (provider.auth === "oauth" && !app)
+		throw new ProviderError(`${provider.name} não está configurado`);
+
+	let acc = toPublishAccount(account);
+	const expiresSoon =
+		account.expiresAt &&
+		account.expiresAt.getTime() - Date.now() <
+			(provider.refreshWindowMs ?? 5 * 60_000);
+	if (expiresSoon && provider.refresh) {
+		const refreshed = await provider.refresh(acc, app).catch((e: Error) => {
+			throw new ProviderError(
+				`Conexão expirada — reconecte a conta (${e.message})`,
+				401,
+			);
+		});
+		if (refreshed) {
+			await updateAccountCredentials(
+				db,
+				account.id,
+				refreshed.credentials,
+				refreshed.expiresAt,
+			);
+			acc = { ...acc, credentials: refreshed.credentials };
+			log("Token renovado");
+		}
+	}
+	return { provider, app, acc };
+}
+
 export async function processTarget(
 	db: Database,
 	targetId: string,
 	log: Logger = () => {},
 ) {
 	const [row] = await db
-		.select({ target: postTarget, post, account: socialAccount, media })
+		.select({
+			target: postTarget,
+			post,
+			account: socialAccount,
+			media,
+			accessUntil: user.accessUntil,
+		})
 		.from(postTarget)
 		.innerJoin(post, eq(post.id, postTarget.postId))
+		.leftJoin(user, eq(user.id, post.userId))
 		.innerJoin(socialAccount, eq(socialAccount.id, postTarget.accountId))
 		.leftJoin(media, eq(media.id, post.mediaId))
 		.where(eq(postTarget.id, targetId));
@@ -96,38 +144,14 @@ export async function processTarget(
 	}, 60_000);
 
 	try {
+		if (row.accessUntil && row.accessUntil.getTime() < Date.now())
+			throw new ProviderError(
+				"Período de teste encerrado: fale com a IA2S para continuar publicando.",
+				undefined,
+				false,
+			);
 		if (!row.media) throw new ProviderError("Post sem vídeo");
-		const provider = getProvider(account.platform);
-		const app =
-			provider.auth === "oauth"
-				? await getAppCredentials(db, account.platform)
-				: null;
-		if (provider.auth === "oauth" && !app)
-			throw new ProviderError(`${provider.name} não está configurado`);
-
-		let acc = toPublishAccount(account);
-		const expiresSoon =
-			account.expiresAt &&
-			account.expiresAt.getTime() - Date.now() <
-				(provider.refreshWindowMs ?? 5 * 60_000);
-		if (expiresSoon && provider.refresh) {
-			const refreshed = await provider.refresh(acc, app).catch((e: Error) => {
-				throw new ProviderError(
-					`Conexão expirada — reconecte a conta (${e.message})`,
-					401,
-				);
-			});
-			if (refreshed) {
-				await updateAccountCredentials(
-					db,
-					account.id,
-					refreshed.credentials,
-					refreshed.expiresAt,
-				);
-				acc = { ...acc, credentials: refreshed.credentials };
-				say("Token renovado");
-			}
-		}
+		const { provider, app, acc } = await freshAccount(db, account, say);
 
 		const result = await provider.publish({
 			account: acc,

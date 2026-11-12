@@ -8,7 +8,16 @@ export default async function AppLayout({
 }) {
 	const { user } = await requireSession();
 	return (
-		<AppShell user={{ name: user.name, email: user.email, role: user.role }}>
+		<AppShell
+			user={{
+				name: user.name,
+				email: user.email,
+				role: user.role,
+				accessUntil: user.accessUntil
+					? new Date(user.accessUntil).toISOString()
+					: null,
+			}}
+		>
 			{children}
 		</AppShell>
 	);

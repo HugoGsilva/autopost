@@ -30,6 +30,8 @@ const pg = new EmbeddedPostgres({
 	password: "password",
 	port: PG_PORT,
 	persistent: false,
+	// No Linux (CI) o bun não roda o script que cria os links das libs do Postgres.
+	autoRehydrateSymlinks: true,
 	initdbFlags: ["--encoding=UTF8", "--locale=C"],
 	onLog: () => {},
 });
@@ -47,6 +49,7 @@ const env = {
 	NEXT_DIST_DIR: ".next-e2e",
 	WORKER_POLL_MS: "1000",
 	DEMO_ENABLED: "true",
+	SIGNUP_RATE_LIMIT: "100",
 	NODE_ENV: "production",
 };
 
@@ -98,7 +101,8 @@ await run("bun", ["x", "drizzle-kit", "push", "--force"], "packages/db", {
 	tag: "db",
 });
 if (!process.env.E2E_SKIP_BUILD)
-	await run("bun", ["x", "next", "build"], "apps/web", {
+	// "build" do web gera antes os tipos da API (packages/api/dist), que o next build usa.
+	await run("bun", ["run", "build"], "apps/web", {
 		wait: true,
 		tag: "build",
 	});

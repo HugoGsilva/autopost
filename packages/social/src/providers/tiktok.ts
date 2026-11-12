@@ -7,6 +7,11 @@ import {
 	truncate,
 	withQuery,
 } from "../http";
+import {
+	type TikTokCreatorInfo,
+	tiktokPostOptions,
+	tiktokPostProblems,
+} from "../tiktok-rules";
 import { MOV, MP4, type Provider, WEBM } from "../types";
 
 const API = "https://open.tiktokapis.com/v2";
@@ -37,41 +42,34 @@ async function api(path: string, token: string, json?: unknown) {
 	return data.data;
 }
 
+/** Dados do criador que o TikTok exige consultar antes de mostrar a tela de post. */
+export async function tiktokCreatorInfo(
+	token: string,
+): Promise<TikTokCreatorInfo> {
+	const c = await api("/post/publish/creator_info/query/", token);
+	return {
+		nickname: c.creator_nickname ?? "",
+		username: c.creator_username ?? null,
+		avatarUrl: c.creator_avatar_url ?? null,
+		privacyOptions: c.privacy_level_options ?? [],
+		commentDisabled: Boolean(c.comment_disabled),
+		duetDisabled: Boolean(c.duet_disabled),
+		stitchDisabled: Boolean(c.stitch_disabled),
+		maxDurationSec: c.max_video_post_duration_sec ?? null,
+	};
+}
+
 export const tiktok: Provider = {
 	id: "tiktok",
 	name: "TikTok",
 	brandColor: "#000000",
 	auth: "oauth",
 	tagline: "Publicação direta ou envio para a caixa de rascunhos",
-	requirements:
-		"Enquanto o app não for auditado pelo TikTok, a conta precisa estar privada e os vídeos saem como “Só eu”.",
 	captionLimit: 2200,
 	acceptedTypes: [MP4, MOV, WEBM],
 	preferredAspect: "vertical",
 	maxSizeMB: 4096,
 	maxDurationSec: 10 * 60,
-	optionFields: [
-		{
-			key: "mode",
-			label: "Modo",
-			kind: "select",
-			choices: [
-				{ value: "direct", label: "Publicar direto" },
-				{ value: "inbox", label: "Enviar como rascunho (finalizar no app)" },
-			],
-		},
-		{
-			key: "privacy",
-			label: "Quem pode ver",
-			kind: "select",
-			choices: [
-				{ value: "PUBLIC_TO_EVERYONE", label: "Todos" },
-				{ value: "MUTUAL_FOLLOW_FRIENDS", label: "Amigos" },
-				{ value: "FOLLOWER_OF_CREATOR", label: "Seguidores" },
-				{ value: "SELF_ONLY", label: "Só eu" },
-			],
-		},
-	],
 	setup: {
 		consoleUrl: "https://developers.tiktok.com/apps/",
 		clientIdLabel: "Client Key",
@@ -84,8 +82,6 @@ export const tiktok: Provider = {
 			"Sem auditoria do TikTok, os vídeos saem como PRIVADOS (Só eu) e a conta precisa estar privada. Envie o app para auditoria para publicar em público.",
 		],
 	},
-	warning:
-		"Antes da auditoria do app no TikTok, os posts ficam visíveis só para você.",
 	refreshWindowMs: 10 * 60_000,
 
 	getAuthUrl: (ctx) =>
@@ -169,29 +165,27 @@ export const tiktok: Provider = {
 				source_info,
 			});
 		} else {
-			const creator = await api("/post/publish/creator_info/query/", token);
-			const allowed: string[] = creator.privacy_level_options ?? [];
-			const wanted = String(options.privacy || "PUBLIC_TO_EVERYONE");
-			const privacy = allowed.includes(wanted)
-				? wanted
-				: allowed.includes("SELF_ONLY")
-					? "SELF_ONLY"
-					: allowed[0];
-			if (privacy !== wanted) {
-				log(`Privacidade "${wanted}" indisponível — usando "${privacy}"`);
-				note =
-					privacy === "SELF_ONLY"
-						? "Publicado como “Só eu”: o TikTok ainda não liberou posts públicos para este app (falta a auditoria)."
-						: `O TikTok não permitiu “${wanted}”; publicado como “${privacy}”.`;
-			}
+			// Consulta de novo na hora: a conta pode ter mudado desde o agendamento.
+			const creator = await tiktokCreatorInfo(token);
+			const problems = tiktokPostProblems(options, creator, media.durationSec);
+			if (problems.length) throw new ProviderError(problems.join(" • "));
+			const o = tiktokPostOptions(options);
+			log(`Privacidade ${o.privacy}`);
 			init = await api("/post/publish/video/init/", token, {
 				post_info: {
 					title: truncate(caption, 2200),
-					privacy_level: privacy,
+					privacy_level: o.privacy,
+					disable_comment: !o.allowComment || creator.commentDisabled,
+					disable_duet: !o.allowDuet || creator.duetDisabled,
+					disable_stitch: !o.allowStitch || creator.stitchDisabled,
+					brand_organic_toggle: o.brandOrganic,
+					brand_content_toggle: o.brandContent,
 					video_cover_timestamp_ms: 1000,
 				},
 				source_info,
 			});
+			if (o.privacy === "SELF_ONLY")
+				note = "Publicado como “Só eu”: só você vê o vídeo no TikTok.";
 		}
 		log(`publish_id ${init.publish_id}`);
 
@@ -228,7 +222,10 @@ export const tiktok: Provider = {
 		const postId = status.publicaly_available_post_id?.[0];
 		if (inbox)
 			note =
-				"Enviado para a caixa de rascunhos do TikTok: abra o app em até 24h para publicar.";
+				"Enviado para a caixa de rascunhos do TikTok: abra a notificação no app em até 24h para revisar e publicar.";
+		else if (!postId)
+			note ??=
+				"O TikTok recebeu o vídeo. Ele pode levar alguns minutos para aparecer no perfil.";
 		return {
 			note,
 			externalId: String(postId ?? init.publish_id),

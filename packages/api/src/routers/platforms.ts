@@ -1,11 +1,15 @@
 import { platformConfig, socialAccount } from "@autopost/db/schema/social";
 import {
+	freshAccount,
 	getProvider,
 	isPublicAppUrl,
 	listProviderInfo,
 	PLATFORM_IDS,
 	redirectUri,
+	markAccountError,
+	ProviderError,
 	saveAppCredentials,
+	tiktokCreatorInfo,
 	upsertAccounts,
 } from "@autopost/social";
 import { ORPCError } from "@orpc/server";
@@ -86,6 +90,7 @@ export const accountsRouter = {
 		context.db
 			.select(publicAccount)
 			.from(socialAccount)
+			.where(eq(socialAccount.connectedBy, context.session.user.id))
 			.orderBy(socialAccount.platform, desc(socialAccount.createdAt)),
 	),
 
@@ -110,24 +115,6 @@ export const accountsRouter = {
 			}
 			try {
 				const account = await provider.connectManual(input.fields);
-				// Credenciais digitadas não provam posse da conta: não deixa sobrescrever a de outra pessoa.
-				const [existing] = await context.db
-					.select({ connectedBy: socialAccount.connectedBy })
-					.from(socialAccount)
-					.where(
-						and(
-							eq(socialAccount.platform, input.platform),
-							eq(socialAccount.externalId, account.externalId),
-						),
-					);
-				if (
-					existing?.connectedBy &&
-					existing.connectedBy !== context.session.user.id &&
-					context.session.user.role !== "admin"
-				)
-					throw new Error(
-						"essa conta já foi conectada por outra pessoa. Peça a um administrador.",
-					);
 				const [id] = await upsertAccounts(
 					context.db,
 					input.platform,
@@ -139,6 +126,37 @@ export const accountsRouter = {
 				throw new ORPCError("BAD_REQUEST", {
 					message: `Não foi possível conectar: ${(err as Error).message}`,
 				});
+			}
+		}),
+
+	/**
+	 * Quem vai publicar e o que a conta permite (privacidade, interações, duração).
+	 * O TikTok exige mostrar isso na tela antes de cada post direto.
+	 */
+	tiktokCreatorInfo: protectedProcedure
+		.input(z.object({ accountId: z.string() }))
+		.handler(async ({ context, input }) => {
+			const [row] = await context.db
+				.select()
+				.from(socialAccount)
+				.where(
+					and(
+						eq(socialAccount.id, input.accountId),
+						eq(socialAccount.connectedBy, context.session.user.id),
+						eq(socialAccount.platform, "tiktok"),
+					),
+				);
+			if (!row)
+				throw new ORPCError("NOT_FOUND", { message: "Conta não encontrada" });
+			try {
+				const { acc } = await freshAccount(context.db, row);
+				const info = await tiktokCreatorInfo(acc.credentials.accessToken!);
+				return { ok: true as const, ...info };
+			} catch (err) {
+				const message = (err as Error).message;
+				if (err instanceof ProviderError && err.status === 401)
+					await markAccountError(context.db, row.id, message, "expired");
+				return { ok: false as const, message: tiktokBlockMessage(message) };
 			}
 		}),
 
@@ -164,11 +182,11 @@ export const accountsRouter = {
 		}),
 };
 
-/** Admin ou quem conectou a conta. */
+/** Só o dono mexe na conta. */
 async function assertCanManage(
 	context: {
 		db: Context["db"];
-		session: { user: { id: string; role: string } };
+		session: { user: { id: string } };
 	},
 	accountId: string,
 ) {
@@ -176,14 +194,19 @@ async function assertCanManage(
 		.select({ connectedBy: socialAccount.connectedBy })
 		.from(socialAccount)
 		.where(eq(socialAccount.id, accountId));
-	if (!row)
+	if (!row || row.connectedBy !== context.session.user.id)
 		throw new ORPCError("NOT_FOUND", { message: "Conta não encontrada" });
-	if (
-		context.session.user.role !== "admin" &&
-		row.connectedBy !== context.session.user.id
-	)
-		throw new ORPCError("FORBIDDEN", {
-			message:
-				"Só quem conectou esta conta ou um administrador pode alterá-la.",
-		});
+}
+
+/** Erros do TikTok que impedem postar agora, em linguagem simples. */
+function tiktokBlockMessage(raw: string) {
+	if (raw.includes("spam_risk_too_many_posts"))
+		return "Esta conta atingiu o limite de posts do TikTok por hoje. Tente novamente amanhã.";
+	if (raw.includes("spam_risk_user_banned_from_posting"))
+		return "O TikTok bloqueou novas publicações nesta conta.";
+	if (raw.includes("reached_active_user_cap"))
+		return "O TikTok atingiu o limite diário de contas que podem postar pelo Cast. Tente mais tarde.";
+	if (/access_token|401|expirad/i.test(raw))
+		return "A conexão com o TikTok expirou. Reconecte a conta em Contas.";
+	return `O TikTok não liberou o post agora: ${raw}`;
 }

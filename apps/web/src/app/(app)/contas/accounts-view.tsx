@@ -252,8 +252,7 @@ export function AccountsView({
 
 			{!isAdmin && pending.length > 0 && (
 				<p className="text-muted-foreground text-sm">
-					Outras redes ({pending.map((p) => p.name).join(", ")}) podem ser
-					liberadas pelo administrador.
+					Em breve no Cast: {pending.map((p) => p.name).join(", ")}.
 				</p>
 			)}
 
