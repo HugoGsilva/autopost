@@ -5,7 +5,7 @@ O app passa por duas etapas: **revisão do app** (sair do sandbox) e depois **au
 
 ## Antes de enviar
 
-- [ ] `apps/web/src/lib/site.ts`: preencher razão social, CNPJ, endereço e (opcional) WhatsApp.
+- [x] `apps/web/src/lib/site.ts`: razão social, CNPJ e cidade (WhatsApp opcional).
 - [ ] Deploy no domínio final, com `/`, `/termos`, `/privacidade` e `/contato` abrindo sem login.
 - [ ] Domínio verificado no console (arquivo `tiktok…txt` em `apps/web/public/`).
 - [ ] Sandbox criado, com Login Kit + Content Posting API (Direct Post ligado) e a conta de teste como *target user*.

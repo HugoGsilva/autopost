@@ -1,13 +1,12 @@
 /**
  * Dados públicos da empresa usados no site, nos Termos e na Política de Privacidade.
- * Os campos entre colchetes precisam ser preenchidos antes de enviar o app para revisão das redes.
  */
 export const COMPANY = {
 	brand: "IA2S",
 	product: "IA2S Cast",
-	legalName: "[RAZÃO SOCIAL DA IA2S]",
-	cnpj: "[CNPJ]",
-	address: "[ENDEREÇO COMPLETO]",
+	legalName: "IA2S Soluções e Sistemas Ltda.",
+	cnpj: "65.840.082/0001-28",
+	address: "Goiânia/GO",
 	site: "https://ia2s.com.br",
 };
 

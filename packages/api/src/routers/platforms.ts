@@ -17,7 +17,7 @@ import { and, desc, eq } from "drizzle-orm";
 import z from "zod";
 
 import type { Context } from "../context";
-import { adminProcedure, protectedProcedure } from "../index";
+import { activeProcedure, adminProcedure, protectedProcedure } from "../index";
 
 const platformId = z.enum(PLATFORM_IDS);
 
@@ -94,7 +94,7 @@ export const accountsRouter = {
 			.orderBy(socialAccount.platform, desc(socialAccount.createdAt)),
 	),
 
-	connectManual: protectedProcedure
+	connectManual: activeProcedure
 		.input(
 			z.object({
 				platform: platformId,
@@ -102,6 +102,8 @@ export const accountsRouter = {
 			}),
 		)
 		.handler(async ({ context, input }) => {
+			if (input.platform === "demo" && !demoEnabled())
+				throw new ORPCError("NOT_FOUND");
 			const provider = getProvider(input.platform);
 			if (!provider.connectManual)
 				throw new ORPCError("BAD_REQUEST", {

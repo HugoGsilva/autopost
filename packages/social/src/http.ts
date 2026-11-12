@@ -21,6 +21,8 @@ type RequestOptions = Omit<RequestInit, "body"> & {
 	bearer?: string;
 	/** Extrai mensagem de erro específica da plataforma. */
 	errorMessage?: (body: unknown) => string | undefined;
+	/** Recusa respostas maiores que isso (servidores escolhidos pelo usuário). */
+	maxResponseBytes?: number;
 };
 
 export function withQuery(
@@ -49,13 +51,40 @@ function defaultErrorMessage(body: unknown): string | undefined {
 	);
 }
 
+async function readText(res: Response, max?: number): Promise<string> {
+	if (!max || !res.body) return res.text();
+	const reader = res.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		size += value.byteLength;
+		if (size > max) {
+			await reader.cancel();
+			throw new ProviderError("Resposta grande demais do servidor");
+		}
+		chunks.push(value);
+	}
+	return Buffer.concat(chunks).toString("utf8");
+}
+
 /** fetch com JSON/form, erro padronizado e classificação de retry (429/5xx). */
 export async function request<T = any>(
 	url: string,
 	opts: RequestOptions = {},
 ): Promise<{ data: T; res: Response }> {
-	const { query, json, form, bearer, errorMessage, headers, body, ...init } =
-		opts;
+	const {
+		query,
+		json,
+		form,
+		bearer,
+		errorMessage,
+		maxResponseBytes,
+		headers,
+		body,
+		...init
+	} = opts;
 	const h = new Headers(headers);
 	let payload: BodyInit | undefined = body;
 	if (json !== undefined) {
@@ -84,7 +113,7 @@ export async function request<T = any>(
 			true,
 		);
 	}
-	const text = await res.text();
+	const text = await readText(res, maxResponseBytes);
 	let data: any = text;
 	try {
 		data = text ? JSON.parse(text) : null;

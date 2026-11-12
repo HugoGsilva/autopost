@@ -5,6 +5,9 @@ import { MOV, MP4, type Provider, WEBM } from "../types";
 
 /* ───────────────────────── Bluesky (senha de app) ───────────────────────── */
 
+/** Teto de espera do Demo: o valor vem do usuário e o worker não pode ficar preso nele. */
+const demoDelay = (v: unknown) => Math.min(Math.max(Number(v) || 1500, 0), 10_000);
+
 const BSKY = "https://bsky.social";
 
 /** Só a mensagem do padrão XRPC: nunca devolve o corpo cru de um servidor qualquer. */
@@ -23,9 +26,13 @@ async function xrpc(
 	opts: Parameters<typeof request>[1] = {},
 ) {
 	if (service !== BSKY) await assertPublicHttpsUrl(service);
+	// Tempo e tamanho limitados: um servidor lento ou gigante não pode prender o worker.
+	const upload = method === "com.atproto.repo.uploadBlob";
 	return request(`${service}/xrpc/${method}`, {
 		...opts,
 		redirect: "manual",
+		signal: AbortSignal.timeout(upload ? 15 * 60_000 : 60_000),
+		maxResponseBytes: 1024 * 1024,
 		errorMessage: xrpcError,
 	});
 }
@@ -335,12 +342,12 @@ export const demo: Provider = {
 			externalId: `demo-${randomToken(6)}`,
 			name,
 			username: name.toLowerCase().replace(/\s+/g, "."),
-			credentials: { delayMs: Number(f.delayMs) || 1500 },
+			credentials: { delayMs: demoDelay(f.delayMs) },
 		};
 	},
 
 	async publish({ account, caption, log }) {
-		await sleep(Number(account.credentials.delayMs) || 1500);
+		await sleep(demoDelay(account.credentials.delayMs));
 		if (/#falha\b/i.test(caption))
 			throw new ProviderError("Falha simulada (#falha na legenda)");
 		log("Publicação simulada");

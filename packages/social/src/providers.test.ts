@@ -501,10 +501,12 @@ describe("segurança e mensagens", () => {
 			"::1",
 			"fd00::1",
 			"::ffff:10.0.0.1",
+			"::ffff:7f00:1",
+			"::ffff:a9fe:a9fe",
 			"100.64.0.1",
 		])
 			expect(isPrivateIp(ip)).toBe(true);
-		for (const ip of ["8.8.8.8", "1.1.1.1", "2606:4700::1111"])
+		for (const ip of ["8.8.8.8", "1.1.1.1", "2606:4700::1111", "::ffff:808:808"])
 			expect(isPrivateIp(ip)).toBe(false);
 		await expect(assertPublicHttpsUrl("http://bsky.social")).rejects.toThrow(
 			/https/,
@@ -518,6 +520,9 @@ describe("segurança e mensagens", () => {
 		await expect(assertPublicHttpsUrl("https://[::1]")).rejects.toThrow(
 			/não permitido/,
 		);
+		await expect(
+			assertPublicHttpsUrl("https://[::ffff:127.0.0.1]"),
+		).rejects.toThrow(/não permitido/);
 	});
 
 	test("erros técnicos viram mensagem simples com ação", async () => {

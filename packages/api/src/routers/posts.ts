@@ -32,7 +32,15 @@ const createInput = z.object({
 	caption: z.string().max(10_000).default(""),
 	/** null = publicar agora */
 	scheduledAt: z.coerce.date().nullish(),
-	targets: z.array(targetInput).min(1, "Escolha pelo menos um destino"),
+	targets: z
+		.array(targetInput)
+		.min(1, "Escolha pelo menos um destino")
+		.max(50, "Escolha no máximo 50 destinos")
+		// Uma publicação por conta: repetir a conta multiplicaria posts (spam) com um só saldo.
+		.refine(
+			(ts) => new Set(ts.map((t) => t.accountId)).size === ts.length,
+			"Cada conta só pode aparecer uma vez",
+		),
 });
 
 /** Teto de posts durante o teste grátis (protege o servidor de abuso). */
