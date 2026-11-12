@@ -22,6 +22,7 @@ import {
 	Plus,
 	Settings,
 	Sun,
+	Trash2,
 	UsersRound,
 } from "lucide-react";
 import type { Route } from "next";
@@ -33,6 +34,8 @@ import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { BrandMark } from "./brand";
 import { ChangePasswordDialog } from "./change-password-dialog";
+import { DeleteAccountDialog } from "./delete-account-dialog";
+import { TrialBanner } from "./trial-banner";
 import { WorkerBanner } from "./worker-banner";
 
 type NavItem = {
@@ -55,7 +58,13 @@ const nav: NavItem[] = [
 	},
 ];
 
-export type ShellUser = { name: string; email: string; role: string };
+export type ShellUser = {
+	name: string;
+	email: string;
+	role: string;
+	/** Fim do teste grátis (ISO); null = sem prazo. */
+	accessUntil: string | null;
+};
 
 export function AppShell({
 	user,
@@ -120,6 +129,7 @@ export function AppShell({
 					</Link>
 					<UserMenu user={user} compact />
 				</header>
+				<TrialBanner accessUntil={user.accessUntil} />
 				<WorkerBanner isAdmin={user.role === "admin"} />
 				<main className="min-w-0 flex-1 overflow-x-clip">{children}</main>
 			</div>
@@ -174,6 +184,7 @@ function UserMenu({ user, compact }: { user: ShellUser; compact?: boolean }) {
 	const router = useRouter();
 	const { resolvedTheme, setTheme } = useTheme();
 	const [changingPassword, setChangingPassword] = useState(false);
+	const [deleting, setDeleting] = useState(false);
 	const initials = user.name
 		.split(" ")
 		.map((p) => p[0])
@@ -187,6 +198,7 @@ function UserMenu({ user, compact }: { user: ShellUser; compact?: boolean }) {
 				open={changingPassword}
 				onOpenChange={setChangingPassword}
 			/>
+			<DeleteAccountDialog open={deleting} onOpenChange={setDeleting} />
 			<DropdownMenu>
 				<DropdownMenuTrigger
 					render={
@@ -238,6 +250,11 @@ function UserMenu({ user, compact }: { user: ShellUser; compact?: boolean }) {
 					{user.role === "admin" && (
 						<DropdownMenuItem onClick={() => router.push("/configuracoes")}>
 							<Settings /> Configurações
+						</DropdownMenuItem>
+					)}
+					{user.role !== "admin" && (
+						<DropdownMenuItem onClick={() => setDeleting(true)}>
+							<Trash2 /> Excluir minha conta
 						</DropdownMenuItem>
 					)}
 					<DropdownMenuSeparator />

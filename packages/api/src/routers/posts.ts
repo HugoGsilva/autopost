@@ -17,7 +17,7 @@ import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import z from "zod";
 
 import type { Context } from "../context";
-import { protectedProcedure } from "../index";
+import { activeProcedure, protectedProcedure } from "../index";
 
 const targetInput = z.object({
 	accountId: z.string(),
@@ -32,6 +32,9 @@ const createInput = z.object({
 	scheduledAt: z.coerce.date().nullish(),
 	targets: z.array(targetInput).min(1, "Escolha pelo menos um destino"),
 });
+
+/** Teto de posts durante o teste grátis (protege o servidor de abuso). */
+export const TRIAL_MAX_POSTS = 20;
 
 const FORMAT_LABELS: Record<string, string> = {
 	"video/mp4": "MP4",
@@ -149,22 +152,50 @@ async function loadPosts(
 	});
 }
 
-async function getOwnedPost(db: Context["db"], id: string) {
-	const [row] = await db.select().from(post).where(eq(post.id, id));
+async function getOwnedPost(db: Context["db"], id: string, userId: string) {
+	const [row] = await db
+		.select()
+		.from(post)
+		.where(and(eq(post.id, id), eq(post.userId, userId)));
 	if (!row)
 		throw new ORPCError("NOT_FOUND", { message: "Post não encontrado" });
 	return row;
 }
 
+async function getOwnedTarget(
+	db: Context["db"],
+	targetId: string,
+	userId: string,
+) {
+	const [row] = await db
+		.select({ target: postTarget })
+		.from(postTarget)
+		.innerJoin(post, eq(post.id, postTarget.postId))
+		.where(and(eq(postTarget.id, targetId), eq(post.userId, userId)));
+	if (!row) throw new ORPCError("NOT_FOUND");
+	return row.target;
+}
+
 export const postsRouter = {
-	create: protectedProcedure
+	create: activeProcedure
 		.input(createInput)
 		.handler(async ({ context, input }) => {
 			const { db } = context;
+			const userId = context.session.user.id;
+			if (context.session.user.accessUntil) {
+				const [used] = await db
+					.select({ n: sql<number>`count(*)::int` })
+					.from(post)
+					.where(eq(post.userId, userId));
+				if ((used?.n ?? 0) >= TRIAL_MAX_POSTS)
+					throw new ORPCError("FORBIDDEN", {
+						message: `O teste grátis permite até ${TRIAL_MAX_POSTS} posts. Fale com a IA2S para continuar.`,
+					});
+			}
 			const [file] = await db
 				.select()
 				.from(media)
-				.where(eq(media.id, input.mediaId));
+				.where(and(eq(media.id, input.mediaId), eq(media.userId, userId)));
 			if (!file)
 				throw new ORPCError("BAD_REQUEST", {
 					message: "Vídeo não encontrado, envie novamente",
@@ -173,7 +204,12 @@ export const postsRouter = {
 			const accounts = await db
 				.select()
 				.from(socialAccount)
-				.where(inArray(socialAccount.id, accountIds));
+				.where(
+					and(
+						inArray(socialAccount.id, accountIds),
+						eq(socialAccount.connectedBy, userId),
+					),
+				);
 			const problems = validateTargets(
 				input.targets,
 				accounts,
@@ -194,7 +230,7 @@ export const postsRouter = {
 			await db.transaction(async (tx) => {
 				await tx.insert(post).values({
 					id: postId,
-					userId: context.session.user.id,
+					userId,
 					mediaId: file.id,
 					caption: input.caption,
 					scheduledAt: when,
@@ -238,6 +274,7 @@ export const postsRouter = {
 			loadPosts(
 				context.db,
 				and(
+					eq(post.userId, context.session.user.id),
 					input.from ? gte(post.scheduledAt, input.from) : undefined,
 					input.to ? lt(post.scheduledAt, input.to) : undefined,
 					input.status ? eq(post.status, input.status) : undefined,
@@ -249,13 +286,17 @@ export const postsRouter = {
 	get: protectedProcedure
 		.input(z.object({ id: z.string() }))
 		.handler(async ({ context, input }) => {
-			const [row] = await loadPosts(context.db, and(eq(post.id, input.id)), 1);
+			const [row] = await loadPosts(
+				context.db,
+				and(eq(post.id, input.id), eq(post.userId, context.session.user.id)),
+				1,
+			);
 			if (!row)
 				throw new ORPCError("NOT_FOUND", { message: "Post não encontrado" });
 			return row;
 		}),
 
-	update: protectedProcedure
+	update: activeProcedure
 		.input(
 			z.object({
 				id: z.string(),
@@ -268,7 +309,11 @@ export const postsRouter = {
 			}),
 		)
 		.handler(async ({ context, input }) => {
-			const p = await getOwnedPost(context.db, input.id);
+			const p = await getOwnedPost(
+				context.db,
+				input.id,
+				context.session.user.id,
+			);
 			if (p.status !== "scheduled")
 				throw new ORPCError("BAD_REQUEST", {
 					message: "Só dá para editar posts que ainda não começaram a sair",
@@ -334,7 +379,9 @@ export const postsRouter = {
 			const [file] = await context.db
 				.select()
 				.from(media)
-				.where(eq(media.id, input.id));
+				.where(
+					and(eq(media.id, input.id), eq(media.userId, context.session.user.id)),
+				);
 			if (!file)
 				throw new ORPCError("NOT_FOUND", {
 					message:
@@ -355,11 +402,11 @@ export const postsRouter = {
 	cancelTarget: protectedProcedure
 		.input(z.object({ targetId: z.string() }))
 		.handler(async ({ context, input }) => {
-			const [t] = await context.db
-				.select()
-				.from(postTarget)
-				.where(eq(postTarget.id, input.targetId));
-			if (!t) throw new ORPCError("NOT_FOUND");
+			const t = await getOwnedTarget(
+				context.db,
+				input.targetId,
+				context.session.user.id,
+			);
 			if (t.status !== "pending")
 				throw new ORPCError("BAD_REQUEST", {
 					message: "Esse destino já foi processado",
@@ -372,10 +419,14 @@ export const postsRouter = {
 			return { ok: true };
 		}),
 
-	reschedule: protectedProcedure
+	reschedule: activeProcedure
 		.input(z.object({ id: z.string(), scheduledAt: z.coerce.date() }))
 		.handler(async ({ context, input }) => {
-			const p = await getOwnedPost(context.db, input.id);
+			const p = await getOwnedPost(
+				context.db,
+				input.id,
+				context.session.user.id,
+			);
 			if (p.status !== "scheduled")
 				throw new ORPCError("BAD_REQUEST", {
 					message: "Só dá para remarcar posts agendados",
@@ -399,10 +450,14 @@ export const postsRouter = {
 			return { ok: true };
 		}),
 
-	publishNow: protectedProcedure
+	publishNow: activeProcedure
 		.input(z.object({ id: z.string() }))
 		.handler(async ({ context, input }) => {
-			const p = await getOwnedPost(context.db, input.id);
+			const p = await getOwnedPost(
+				context.db,
+				input.id,
+				context.session.user.id,
+			);
 			if (p.status !== "scheduled")
 				throw new ORPCError("BAD_REQUEST", {
 					message: "Este post não está agendado",
@@ -424,7 +479,11 @@ export const postsRouter = {
 	cancel: protectedProcedure
 		.input(z.object({ id: z.string() }))
 		.handler(async ({ context, input }) => {
-			const p = await getOwnedPost(context.db, input.id);
+			const p = await getOwnedPost(
+				context.db,
+				input.id,
+				context.session.user.id,
+			);
 			await context.db
 				.update(postTarget)
 				.set({ status: "canceled" })
@@ -435,14 +494,14 @@ export const postsRouter = {
 			return { status };
 		}),
 
-	retryTarget: protectedProcedure
+	retryTarget: activeProcedure
 		.input(z.object({ targetId: z.string() }))
 		.handler(async ({ context, input }) => {
-			const [t] = await context.db
-				.select()
-				.from(postTarget)
-				.where(eq(postTarget.id, input.targetId));
-			if (!t) throw new ORPCError("NOT_FOUND");
+			const t = await getOwnedTarget(
+				context.db,
+				input.targetId,
+				context.session.user.id,
+			);
 			if (t.status !== "failed" && t.status !== "canceled")
 				throw new ORPCError("BAD_REQUEST", {
 					message: "Só dá para tentar de novo destinos com falha",
@@ -458,7 +517,11 @@ export const postsRouter = {
 	remove: protectedProcedure
 		.input(z.object({ id: z.string() }))
 		.handler(async ({ context, input }) => {
-			const p = await getOwnedPost(context.db, input.id);
+			const p = await getOwnedPost(
+				context.db,
+				input.id,
+				context.session.user.id,
+			);
 			if (p.status === "publishing")
 				throw new ORPCError("BAD_REQUEST", {
 					message: "Aguarde terminar de publicar",
@@ -469,6 +532,7 @@ export const postsRouter = {
 
 	stats: protectedProcedure.handler(async ({ context }) => {
 		const { db } = context;
+		const userId = context.session.user.id;
 		const [counts] = await db
 			.select({
 				scheduled: sql<number>`count(*) filter (where ${post.status} = 'scheduled')::int`,
@@ -476,10 +540,12 @@ export const postsRouter = {
 				published7d: sql<number>`count(*) filter (where ${post.status} in ('published','partial') and ${post.scheduledAt} > now() - interval '7 days')::int`,
 				failed7d: sql<number>`count(*) filter (where ${post.status} in ('failed','partial') and ${post.scheduledAt} > now() - interval '7 days')::int`,
 			})
-			.from(post);
+			.from(post)
+			.where(eq(post.userId, userId));
 		const [acc] = await db
 			.select({ n: sql<number>`count(*)::int` })
-			.from(socialAccount);
+			.from(socialAccount)
+			.where(eq(socialAccount.connectedBy, userId));
 		return { ...counts!, accounts: acc?.n ?? 0 };
 	}),
 };

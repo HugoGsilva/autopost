@@ -1,11 +1,16 @@
+import { accessExpired, TRIAL_ENDED } from "@autopost/api";
 import {
 	ALLOWED_VIDEO_TYPES,
 	mediaPublicUrl,
+	mediaUsageBytes,
 	saveUpload,
 } from "@autopost/social";
 import type { NextRequest } from "next/server";
 
+import { TRIAL } from "@/lib/site";
 import { auth, db } from "@/services";
+
+const TRIAL_STORAGE_BYTES = TRIAL.storageGb * 1024 ** 3;
 
 const num = (v: string | null) =>
 	v && Number.isFinite(Number(v)) ? Math.round(Number(v)) : null;
@@ -15,6 +20,20 @@ export async function POST(req: NextRequest) {
 	const session = await auth.api.getSession({ headers: req.headers });
 	if (!session?.user)
 		return Response.json({ error: "Não autenticado" }, { status: 401 });
+	if (accessExpired(session.user))
+		return Response.json({ error: TRIAL_ENDED }, { status: 403 });
+	if (session.user.accessUntil) {
+		const used = await mediaUsageBytes(db, session.user.id);
+		const incoming = Number(req.headers.get("content-length")) || 0;
+		if (used + incoming > TRIAL_STORAGE_BYTES)
+			return Response.json(
+				{
+					error:
+						`O teste grátis tem ${TRIAL.storageGb} GB para vídeos. Fale com a IA2S para continuar.`,
+				},
+				{ status: 413 },
+			);
+	}
 
 	const mimeType = (req.headers.get("content-type") ?? "")
 		.split(";")[0]!

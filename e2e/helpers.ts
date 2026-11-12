@@ -13,6 +13,12 @@ export const MEMBER = {
 	password: "outra-senha-456",
 };
 
+export const TRIAL_USER = {
+	name: "Carla Teste",
+	email: "carla@cliente.com",
+	password: "senha-de-teste-321",
+};
+
 export async function login(page: Page, user = ADMIN) {
 	await page.goto("/login");
 	await page.getByLabel("E-mail").fill(user.email);

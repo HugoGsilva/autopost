@@ -62,6 +62,7 @@ export const socialAccount = pgTable(
 			.default("active")
 			.notNull(),
 		lastError: text("last_error"),
+		/** Dono da conta: só ele a vê e publica nela. */
 		connectedBy: text("connected_by").references(() => user.id, {
 			onDelete: "set null",
 		}),

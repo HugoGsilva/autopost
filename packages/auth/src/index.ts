@@ -11,8 +11,11 @@ export type AuthConfig = {
 	BETTER_AUTH_SECRET: string;
 };
 
-const SIGNUP_CLOSED =
-	"Cadastro fechado. Peça a um administrador para criar seu acesso.";
+/** Dias de teste grátis para quem se cadastra sozinho. */
+export const TRIAL_DAYS = 7;
+
+const TERMS_REQUIRED =
+	"Para criar a conta, aceite os Termos de Uso e a Política de Privacidade.";
 
 export function createAuth(env: AuthConfig, database: Database) {
 	const userCount = async () => {
@@ -42,18 +45,30 @@ export function createAuth(env: AuthConfig, database: Database) {
 		user: {
 			additionalFields: {
 				role: { type: "string", defaultValue: "member", input: false },
+				accessUntil: { type: "date", required: false, input: false },
+				termsAcceptedAt: { type: "date", required: false, input: false },
+			},
+		},
+		// Cadastro aberto: limita contas novas por IP para segurar abuso.
+		rateLimit: {
+			enabled: process.env.NODE_ENV === "production",
+			customRules: {
+				"/sign-up/email": {
+					window: 3600,
+					max: Number(process.env.SIGNUP_RATE_LIMIT) || 5,
+				},
 			},
 		},
 		hooks: {
-			// Roda antes da checagem de e-mail existente: não dá para descobrir e-mails da equipe pelo cadastro.
 			before: createAuthMiddleware(async (ctx) => {
 				if (ctx.path !== "/sign-up/email") return;
-				if ((await userCount()) > 0)
-					throw new APIError("FORBIDDEN", { message: SIGNUP_CLOSED });
-				const email = String(
-					(ctx.body as { email?: string } | undefined)?.email ?? "",
-				).toLowerCase();
-				if (setupEmail && email !== setupEmail)
+				const body = ctx.body as
+					| { email?: string; acceptTerms?: boolean }
+					| undefined;
+				if (body?.acceptTerms !== true)
+					throw new APIError("BAD_REQUEST", { message: TERMS_REQUIRED });
+				const email = String(body?.email ?? "").toLowerCase();
+				if (setupEmail && email !== setupEmail && (await userCount()) === 0)
 					throw new APIError("FORBIDDEN", {
 						message: "Use o e-mail de administrador definido na instalação.",
 					});
@@ -62,11 +77,19 @@ export function createAuth(env: AuthConfig, database: Database) {
 		databaseHooks: {
 			user: {
 				create: {
-					// Ferramenta interna: o primeiro cadastro vira admin; depois disso só o admin cria acessos.
+					// O primeiro cadastro vira admin sem prazo; os demais entram no teste grátis.
 					before: async (user) => {
-						if ((await userCount()) > 0)
-							throw new APIError("FORBIDDEN", { message: SIGNUP_CLOSED });
-						return { data: { ...user, role: "admin" } };
+						const first = (await userCount()) === 0;
+						return {
+							data: {
+								...user,
+								role: first ? "admin" : "member",
+								accessUntil: first
+									? null
+									: new Date(Date.now() + TRIAL_DAYS * 86_400_000),
+								termsAcceptedAt: new Date(),
+							},
+						};
 					},
 				},
 			},

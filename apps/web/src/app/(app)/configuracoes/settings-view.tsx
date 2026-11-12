@@ -32,6 +32,13 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@autopost/ui/components/dialog";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "@autopost/ui/components/dropdown-menu";
 import { Field, FieldGroup, FieldLabel } from "@autopost/ui/components/field";
 import { Input } from "@autopost/ui/components/input";
 import {
@@ -75,7 +82,7 @@ export function SettingsView({ currentUserId }: { currentUserId: string }) {
 		<Tabs defaultValue="platforms">
 			<TabsList className="mb-4">
 				<TabsTrigger value="platforms">Redes sociais</TabsTrigger>
-				<TabsTrigger value="team">Equipe</TabsTrigger>
+				<TabsTrigger value="team">Usuários</TabsTrigger>
 			</TabsList>
 			<TabsContent value="platforms">
 				<PlatformsSettings />
@@ -370,6 +377,20 @@ const roleItems = [
 	{ value: "admin", label: "Administrador" },
 ];
 
+const DAY = 86_400_000;
+
+function accessLabel(until: Date | string | null) {
+	if (!until) return { text: "Sem prazo", expired: false };
+	const d = new Date(until);
+	const date = d.toLocaleDateString("pt-BR", {
+		day: "2-digit",
+		month: "2-digit",
+	});
+	return d.getTime() < Date.now()
+		? { text: `Encerrado em ${date}`, expired: true }
+		: { text: `Acesso até ${date}`, expired: false };
+}
+
 function TeamSettings({ currentUserId }: { currentUserId: string }) {
 	const qc = useQueryClient();
 	const team = useQuery(orpc.team.list.queryOptions());
@@ -409,6 +430,15 @@ function TeamSettings({ currentUserId }: { currentUserId: string }) {
 			onError: (e) => toast.error(errorMessage(e)),
 		}),
 	);
+	const setAccess = useMutation(
+		orpc.team.setAccess.mutationOptions({
+			onSuccess: () => {
+				toast.success("Acesso atualizado");
+				invalidate();
+			},
+			onError: (e) => toast.error(errorMessage(e)),
+		}),
+	);
 	const setUserRole = useMutation(
 		orpc.team.setRole.mutationOptions({
 			onSuccess: invalidate,
@@ -423,10 +453,11 @@ function TeamSettings({ currentUserId }: { currentUserId: string }) {
 		<Card>
 			<CardHeader className="flex flex-row items-start justify-between gap-4">
 				<div className="space-y-1">
-					<CardTitle className="text-base">Equipe</CardTitle>
+					<CardTitle className="text-base">Usuários</CardTitle>
 					<CardDescription>
-						Quem pode entrar no Cast. Administradores também configuram as
-						redes.
+						Todos os cadastros do Cast. Quem se cadastra sozinho entra no teste
+						grátis; aqui você estende ou libera o acesso de quem fechou com a
+						IA2S. Administradores também configuram as redes.
 					</CardDescription>
 				</div>
 				<Button onClick={() => setAdding(true)}>
@@ -451,6 +482,66 @@ function TeamSettings({ currentUserId }: { currentUserId: string }) {
 								{u.email}
 							</p>
 						</div>
+						{u.id !== currentUserId && (
+							<DropdownMenu>
+								<DropdownMenuTrigger
+									render={
+										<Button
+											variant="outline"
+											size="sm"
+											aria-label={`Acesso de ${u.name}`}
+										/>
+									}
+								>
+									<Badge
+										variant={
+											accessLabel(u.accessUntil).expired
+												? "destructive"
+												: "secondary"
+										}
+									>
+										{accessLabel(u.accessUntil).text}
+									</Badge>
+									<ChevronDown />
+								</DropdownMenuTrigger>
+								<DropdownMenuContent align="end">
+									<DropdownMenuItem
+										onClick={() =>
+											setAccess.mutate({
+												id: u.id,
+												until: new Date(Date.now() + 7 * DAY),
+											})
+										}
+									>
+										Liberar por 7 dias
+									</DropdownMenuItem>
+									<DropdownMenuItem
+										onClick={() =>
+											setAccess.mutate({
+												id: u.id,
+												until: new Date(Date.now() + 30 * DAY),
+											})
+										}
+									>
+										Liberar por 30 dias
+									</DropdownMenuItem>
+									<DropdownMenuItem
+										onClick={() => setAccess.mutate({ id: u.id, until: null })}
+									>
+										Liberar sem prazo
+									</DropdownMenuItem>
+									<DropdownMenuSeparator />
+									<DropdownMenuItem
+										variant="destructive"
+										onClick={() =>
+											setAccess.mutate({ id: u.id, until: new Date() })
+										}
+									>
+										Encerrar acesso agora
+									</DropdownMenuItem>
+								</DropdownMenuContent>
+							</DropdownMenu>
+						)}
 						<Select
 							items={roleItems}
 							value={u.role}
@@ -582,8 +673,8 @@ function TeamSettings({ currentUserId }: { currentUserId: string }) {
 							Remover o acesso de {removingUser?.name}?
 						</AlertDialogTitle>
 						<AlertDialogDescription>
-							A pessoa não consegue mais entrar. Os posts e contas que ela criou
-							continuam no sistema.
+							Apaga o cadastro, as publicações, os vídeos e as contas de redes
+							que a pessoa conectou. Não dá para desfazer.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -595,7 +686,7 @@ function TeamSettings({ currentUserId }: { currentUserId: string }) {
 								setRemovingUser(null);
 							}}
 						>
-							Remover acesso
+							Remover usuário
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>

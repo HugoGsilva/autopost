@@ -10,6 +10,7 @@ import {
 	postIdFromUrl,
 	rpc,
 	rpcRaw,
+	TRIAL_USER,
 	uploadSample,
 } from "./helpers";
 
@@ -25,15 +26,45 @@ test.afterAll(async () => {
 	await page.close();
 });
 
-test("primeiro acesso cria o administrador", async () => {
+test("site público abre sem login: home, termos, privacidade e verificação do TikTok", async () => {
 	await page.goto("/");
-	await expect(page).toHaveURL(/\/login/);
+	await expect(page).toHaveURL("/");
+	await expect(
+		page.getByRole("heading", { name: /Um vídeo\.\s*Todas as redes\./ }),
+	).toBeVisible();
+	await expect(page.locator("#redes").getByText("TikTok")).toBeVisible();
+	for (const [path, heading] of [
+		["/termos", "Termos de Uso"],
+		["/privacidade", "Política de Privacidade"],
+		["/contato", "Fale com a IA2S"],
+	] as const) {
+		await page.goto(path);
+		await expect(page.getByRole("heading", { level: 1 })).toHaveText(heading);
+		await expect(
+			page
+				.getByRole("contentinfo")
+				.getByRole("link", { name: "Termos de Uso" }),
+		).toBeVisible();
+	}
+	const tiktok = await page.request.get(
+		"/tiktoke68B5RzTGOtg2sgZyElCJFsyRJVkzpjT.txt",
+	);
+	expect(tiktok.status()).toBe(200);
+	expect(await tiktok.text()).toContain("tiktok-developers-site-verification=");
+});
+
+test("primeiro acesso cria o administrador", async () => {
+	await page.goto("/login");
 	await expect(
 		page.getByRole("heading", { name: "Primeiro acesso" }),
 	).toBeVisible();
 	await page.getByLabel("Seu nome").fill(ADMIN.name);
 	await page.getByLabel("E-mail").fill(ADMIN.email);
 	await page.getByLabel("Senha", { exact: true }).fill(ADMIN.password);
+	// sem aceitar os termos não cria a conta
+	await page.getByRole("button", { name: "Criar conta e entrar" }).click();
+	await expect(page.getByText("aceite os Termos de Uso")).toBeVisible();
+	await page.getByRole("checkbox").click();
 	await page.getByRole("button", { name: "Criar conta e entrar" }).click();
 	await expect(page).toHaveURL(/\/painel/);
 	await expect(page.getByRole("heading", { name: "Olá, Ana" })).toBeVisible();
@@ -42,17 +73,26 @@ test("primeiro acesso cria o administrador", async () => {
 	await expect(page.getByTestId("worker-banner")).toHaveCount(0);
 });
 
-test("cadastro público fechado e sem revelar e-mails da equipe", async ({
-	request,
-}) => {
-	for (const email of ["intruso@x.com", ADMIN.email]) {
-		const res = await request.post("/api/auth/sign-up/email", {
-			data: { name: "Intruso", email, password: "12345678910" },
-			headers: { origin: "http://localhost:3100" },
-		});
-		expect(res.status()).toBe(403);
-		expect(await res.text()).toContain("Cadastro fechado");
-	}
+test("cadastro público exige aceitar os termos", async ({ request }) => {
+	const res = await request.post("/api/auth/sign-up/email", {
+		data: { name: "Sem aceite", email: "sem@x.com", password: "12345678910" },
+		headers: { origin: "http://localhost:3100" },
+	});
+	expect(res.status()).toBe(400);
+	expect(await res.text()).toContain("aceite os Termos");
+	// ninguém se cadastra como admin nem define o próprio prazo
+	const sneaky = await request.post("/api/auth/sign-up/email", {
+		data: {
+			name: "Esperto",
+			email: "esperto@x.com",
+			password: "12345678910",
+			acceptTerms: true,
+			role: "admin",
+			accessUntil: "2099-01-01",
+		},
+		headers: { origin: "http://localhost:3100" },
+	});
+	expect(sneaky.status()).toBe(400);
 });
 
 test("cabeçalhos de segurança e API protegida contra CSRF", async () => {
@@ -351,9 +391,16 @@ test("painel mostra números e atividade", async () => {
 	await expect(page).toHaveURL(/status=failed/);
 });
 
-test("admin cria um membro; membro tem acesso limitado", async () => {
+let adminAccountId = "";
+let adminPostId = "";
+
+test("admin cria um membro; cada um só vê o que é seu", async () => {
+	adminAccountId = (await rpc<{ id: string }[]>(page, "accounts/list"))[0]!.id;
+	adminPostId = (
+		await rpc<{ id: string }[]>(page, "posts/list", { limit: 1 })
+	)[0]!.id;
 	await page.goto("/configuracoes");
-	await page.getByRole("tab", { name: "Equipe" }).click();
+	await page.getByRole("tab", { name: "Usuários" }).click();
 	await page.getByRole("button", { name: "Adicionar" }).click();
 	const dialog = page.getByRole("dialog");
 	await dialog.getByLabel("Nome").fill(MEMBER.name);
@@ -370,17 +417,22 @@ test("admin cria um membro; membro tem acesso limitado", async () => {
 	await page.goto("/configuracoes");
 	await expect(page).toHaveURL(/\/painel/);
 
-	// vê as contas da equipe e pode postar, mas não altera conta de outra pessoa
+	// não vê nem mexe nas contas e posts de outro usuário
 	await page.goto("/contas");
-	const myAccounts = page.getByTestId("my-accounts");
-	await expect(myAccounts.getByText("Loja Demo")).toBeVisible();
-	await expect(
-		myAccounts.getByRole("button", { name: /Desconectar/ }),
-	).toHaveCount(0);
-	const accounts = await rpc<{ id: string }[]>(page, "accounts/list");
+	await expect(page.getByText("Loja Demo")).toHaveCount(0);
+	expect(await rpc<unknown[]>(page, "accounts/list")).toHaveLength(0);
+	expect(await rpc<unknown[]>(page, "posts/list")).toHaveLength(0);
 	expect(
-		(await rpcRaw(page, "accounts/remove", { id: accounts[0]!.id })).status(),
-	).toBe(403);
+		(await rpcRaw(page, "accounts/remove", { id: adminAccountId })).status(),
+	).toBe(404);
+	expect((await rpcRaw(page, "posts/get", { id: adminPostId })).status()).toBe(
+		404,
+	);
+	expect(
+		(await rpcRaw(page, "posts/cancel", { id: adminPostId })).status(),
+	).toBe(404);
+	const stats = await rpc<{ accounts: number }>(page, "posts/stats");
+	expect(stats.accounts).toBe(0);
 	expect((await rpcRaw(page, "team/list")).status()).toBe(403);
 	expect(
 		(
@@ -405,4 +457,80 @@ test("membro troca a própria senha", async () => {
 	await expect(page.getByText("Senha trocada")).toBeVisible();
 	await page.context().clearCookies();
 	await login(page, { ...MEMBER, password: "senha-nova-789" });
+});
+
+test("cadastro livre entra no teste grátis; com o acesso encerrado não publica mais", async ({
+	browser,
+}) => {
+	const trial = await browser.newPage();
+	await trial.goto("/");
+	await trial.getByRole("link", { name: "Testar grátis" }).first().click();
+	await expect(
+		trial.getByRole("heading", { name: "Crie sua conta" }),
+	).toBeVisible();
+	await trial.getByLabel("Seu nome").fill(TRIAL_USER.name);
+	await trial.getByLabel("E-mail").fill(TRIAL_USER.email);
+	await trial.getByLabel("Senha", { exact: true }).fill(TRIAL_USER.password);
+	await trial.getByRole("checkbox").click();
+	await trial.getByRole("button", { name: "Criar conta e entrar" }).click();
+	await expect(trial).toHaveURL(/\/painel/);
+	await expect(trial.getByTestId("trial-banner")).toContainText(
+		"dias restantes",
+	);
+
+	// o admin encerra o acesso
+	await page.context().clearCookies();
+	await login(page, ADMIN);
+	const users = await rpc<{ id: string; email: string }[]>(page, "team/list");
+	const me = users.find((u) => u.email === TRIAL_USER.email)!;
+	await rpc(page, "team/setAccess", {
+		id: me.id,
+		until: new Date(Date.now() - 1000).toISOString(),
+	});
+
+	await trial.reload();
+	await expect(trial.getByTestId("trial-banner")).toContainText(
+		"teste grátis terminou",
+	);
+	const create = await rpcRaw(trial, "posts/create", {
+		mediaId: "x",
+		targets: [{ accountId: "y" }],
+	});
+	expect(create.status()).toBe(403);
+	const upload = await trial.request.post("/api/media", {
+		data: Buffer.from("x"),
+		headers: { "content-type": "video/mp4" },
+	});
+	expect(upload.status()).toBe(403);
+
+	// liberado de novo, a faixa some
+	await rpc(page, "team/setAccess", { id: me.id, until: null });
+	await trial.reload();
+	await expect(trial.getByTestId("trial-banner")).toHaveCount(0);
+	await trial.close();
+});
+
+test("usuário exclui a própria conta e os dados somem", async ({ browser }) => {
+	const gone = await browser.newPage();
+	await gone.goto("/login?modo=cadastro");
+	await gone.getByLabel("Seu nome").fill("Conta Temporária");
+	await gone.getByLabel("E-mail").fill("temporaria@x.com");
+	await gone.getByLabel("Senha", { exact: true }).fill("senha-temporaria-1");
+	await gone.getByRole("checkbox").click();
+	await gone.getByRole("button", { name: "Criar conta e entrar" }).click();
+	await expect(gone).toHaveURL(/\/painel/);
+
+	await gone.locator("aside").getByRole("button", { name: /CT/ }).click();
+	await gone.getByRole("menuitem", { name: "Excluir minha conta" }).click();
+	const dialog = gone.getByRole("dialog");
+	await dialog.getByLabel("Confirme sua senha").fill("senha-errada-123");
+	await dialog.getByRole("button", { name: "Excluir para sempre" }).click();
+	await expect(dialog.getByText("Senha incorreta")).toBeVisible();
+	await dialog.getByLabel("Confirme sua senha").fill("senha-temporaria-1");
+	await dialog.getByRole("button", { name: "Excluir para sempre" }).click();
+	await expect(gone).toHaveURL("/");
+	await gone.close();
+
+	const users = await rpc<{ email: string }[]>(page, "team/list");
+	expect(users.some((u) => u.email === "temporaria@x.com")).toBe(false);
 });

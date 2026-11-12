@@ -1,4 +1,5 @@
 import type { Database } from "@autopost/db";
+import { user } from "@autopost/db/schema/auth";
 import {
 	media,
 	post,
@@ -72,9 +73,16 @@ export async function processTarget(
 	log: Logger = () => {},
 ) {
 	const [row] = await db
-		.select({ target: postTarget, post, account: socialAccount, media })
+		.select({
+			target: postTarget,
+			post,
+			account: socialAccount,
+			media,
+			accessUntil: user.accessUntil,
+		})
 		.from(postTarget)
 		.innerJoin(post, eq(post.id, postTarget.postId))
+		.leftJoin(user, eq(user.id, post.userId))
 		.innerJoin(socialAccount, eq(socialAccount.id, postTarget.accountId))
 		.leftJoin(media, eq(media.id, post.mediaId))
 		.where(eq(postTarget.id, targetId));
@@ -96,6 +104,12 @@ export async function processTarget(
 	}, 60_000);
 
 	try {
+		if (row.accessUntil && row.accessUntil.getTime() < Date.now())
+			throw new ProviderError(
+				"Período de teste encerrado: fale com a IA2S para continuar publicando.",
+				undefined,
+				false,
+			);
 		if (!row.media) throw new ProviderError("Post sem vídeo");
 		const provider = getProvider(account.platform);
 		const app =

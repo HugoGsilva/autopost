@@ -47,6 +47,7 @@ const env = {
 	NEXT_DIST_DIR: ".next-e2e",
 	WORKER_POLL_MS: "1000",
 	DEMO_ENABLED: "true",
+	SIGNUP_RATE_LIMIT: "100",
 	NODE_ENV: "production",
 };
 

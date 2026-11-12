@@ -36,8 +36,11 @@ test("acessibilidade nos temas escuro e claro", async ({ page }) => {
 		await page.emulateMedia({ colorScheme: theme });
 		await page.goto("/login");
 		await page.evaluate((t) => localStorage.setItem("theme", t), theme);
-		await page.reload();
-		await scan(page, `/login (${theme})`);
+		for (const route of ["/login", "/login?modo=cadastro", "/", "/termos"]) {
+			await page.goto(route);
+			await page.waitForLoadState("networkidle");
+			await scan(page, `${route} (${theme})`);
+		}
 	}
 	await login(page, ADMIN);
 	for (const theme of ["dark", "light"] as const) {
