@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [master, saas-tiktok]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Valores de mentira: só servem para o build e os testes saberem que as variáveis existem.
+env:
+  BETTER_AUTH_SECRET: ci-only-secret-not-used-anywhere-else-0000
+  BETTER_AUTH_URL: http://localhost:3100
+  APP_URL: http://localhost:3100
+  CORS_ORIGIN: http://localhost:3100
+  DATABASE_URL: postgresql://postgres:password@localhost:5433/autopost
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run check-types
+      - run: bun run test
+      - name: Migrations batem com o schema
+        working-directory: packages/db
+        run: |
+          bun x drizzle-kit generate --name ci-check
+          if [ -n "$(git status --porcelain src/migrations)" ]; then
+            git status --porcelain src/migrations
+            echo "::error::O schema mudou sem migration correspondente"
+            exit 1
+          fi
+
+  e2e:
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun x playwright install --with-deps chromium
+      - run: bun run test:e2e
+        env:
+          CI: "true"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7
