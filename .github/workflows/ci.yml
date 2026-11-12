@@ -48,8 +48,6 @@ jobs:
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
-      # O Postgres embutido do E2E precisa do script de instalação que o bun não roda por padrão.
-      - run: bun pm trust @embedded-postgres/linux-x64
       - run: bun x playwright install --with-deps chromium
       - run: bun run test:e2e
         env:

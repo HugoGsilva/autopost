@@ -30,6 +30,8 @@ const pg = new EmbeddedPostgres({
 	password: "password",
 	port: PG_PORT,
 	persistent: false,
+	// No Linux (CI) o bun não roda o script que cria os links das libs do Postgres.
+	autoRehydrateSymlinks: true,
 	initdbFlags: ["--encoding=UTF8", "--locale=C"],
 	onLog: () => {},
 });
